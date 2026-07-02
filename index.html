@@ -5,24 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Team Generator</title>
     <meta name="description" content="Klassen verwalten, Anwesenheit erfassen und zufällige Teams generieren.">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.tailwindcss.com; style-src 'self' https://cdnjs.cloudflare.com 'unsafe-inline'; font-src https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.tailwindcss.com; style-src 'self' https://cdnjs.cloudflare.com https://fonts.googleapis.com 'unsafe-inline'; font-src https://cdnjs.cloudflare.com https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
     <meta name="referrer" content="no-referrer">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="text-gray-800 min-h-screen py-6 px-4 md:px-8">
 
-<div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden">
+<div class="max-w-5xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden ring-1 ring-black/5">
 
     <!-- Header -->
-    <div class="bg-indigo-600 text-white p-6 text-center">
-        <h1 class="text-3xl font-bold mb-1">Team Generator</h1>
-        <p class="text-indigo-200 text-sm">Klassen verwalten · Anwesenheit erfassen · Teams bilden</p>
+    <div class="app-header text-white px-6 py-8 text-center relative overflow-hidden">
+        <div class="relative z-10">
+            <h1 class="text-3xl md:text-4xl font-extrabold mb-1.5 tracking-tight">
+                <i class="fas fa-people-group mr-2 opacity-80"></i>Team Generator
+            </h1>
+            <p class="text-indigo-100/90 text-sm">Klassen verwalten · Anwesenheit erfassen · Teams bilden</p>
+        </div>
+        <div class="header-blob header-blob-1"></div>
+        <div class="header-blob header-blob-2"></div>
     </div>
 
     <!-- Tab Navigation -->
-    <div class="bg-indigo-50 border-b border-indigo-200 flex">
+    <div class="bg-indigo-50/70 border-b border-indigo-100 flex">
         <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2 active" data-tab="classes">
             <i class="fas fa-chalkboard-teacher"></i><span class="hidden sm:inline">Klassen</span>
         </button>
@@ -119,10 +126,14 @@
                                 <i class="fas fa-plus text-sm"></i>
                             </button>
                         </div>
-                        <div class="flex gap-4 text-sm">
+                        <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm items-center">
                             <label class="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="student-gender" value="female" checked class="text-indigo-600"><span>Weiblich</span></label>
                             <label class="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="student-gender" value="male" class="text-indigo-600"><span>Männlich</span></label>
                             <label class="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="student-gender" value="diverse" class="text-indigo-600"><span>Divers</span></label>
+                            <label class="inline-flex items-center gap-1.5 cursor-pointer text-emerald-700" title="Für faire Teams im Sportunterricht">
+                                <input type="checkbox" id="student-sporty-input" class="rounded text-emerald-600 h-4 w-4">
+                                <span><i class="fas fa-person-running mr-0.5"></i>Sportlich</span>
+                            </label>
                         </div>
                         <p id="student-error-msg" class="text-red-500 text-xs hidden"></p>
                     </form>
@@ -131,8 +142,8 @@
                             <i class="fas fa-list"></i> Mehrere auf einmal hinzufügen
                         </button>
                         <div id="class-bulk-area" class="hidden mt-2 p-3 bg-gray-50 rounded-lg border text-sm">
-                            <p class="text-xs text-gray-500 mb-1">Format: <code class="bg-gray-200 px-1 rounded">Anna w, Max m, Kim d</code></p>
-                            <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1"></i>Ohne Angabe = weiblich</p>
+                            <p class="text-xs text-gray-500 mb-1">Format: <code class="bg-gray-200 px-1 rounded">Anna w, Max ms, Kim d</code> &nbsp;(<code class="bg-gray-200 px-1 rounded">s</code> = sportlich)</p>
+                            <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1"></i>Ohne Angabe = weiblich, nicht sportlich</p>
                             <textarea id="class-bulk-input" rows="3" placeholder="Anna w&#10;Max m&#10;Kim d"
                                 class="w-full border rounded p-2 text-xs font-mono focus:border-indigo-500 focus:outline-none"></textarea>
                             <p id="class-bulk-msg" class="text-xs text-indigo-700 hidden mt-1"></p>
@@ -268,10 +279,11 @@
                             <input type="text" id="person-name" placeholder="z.B. Anna"
                                 class="w-full rounded-md border p-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                         </div>
-                        <div class="flex flex-wrap gap-4 text-sm">
+                        <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm items-center">
                             <label class="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="gender" value="female" checked class="text-indigo-600"> Weiblich</label>
                             <label class="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="gender" value="male" class="text-indigo-600"> Männlich</label>
                             <label class="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="gender" value="diverse" class="text-indigo-600"> Divers</label>
+                            <label class="inline-flex items-center gap-1.5 cursor-pointer text-emerald-700"><input type="checkbox" id="person-sporty-input" class="rounded text-emerald-600 h-4 w-4"> Sportlich</label>
                         </div>
                         <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-md transition-colors flex justify-center items-center gap-2 text-sm">
                             <i class="fas fa-plus"></i> Hinzufügen
@@ -290,6 +302,10 @@
                         <div class="flex items-center gap-2">
                             <input type="checkbox" id="balance-gender" class="rounded text-indigo-600 h-4 w-4" checked>
                             <label for="balance-gender" class="text-sm text-gray-700">Geschlechter gleichmässig verteilen</label>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" id="balance-sport" class="rounded text-emerald-600 h-4 w-4">
+                            <label for="balance-sport" class="text-sm text-gray-700">Sportlichkeit fair verteilen <span class="text-xs text-gray-400">(z.B. Sportunterricht — im Ergebnis nicht sichtbar)</span></label>
                         </div>
                         <button id="generate-btn" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition-colors text-base shadow-md flex justify-center items-center gap-2">
                             <i class="fas fa-dice"></i> Teams generieren
@@ -318,8 +334,8 @@
                         <i class="fas fa-list"></i> Mehrere manuell hinzufügen
                     </button>
                     <div id="bulk-area" class="hidden mt-2 bg-white p-3 rounded-lg border border-indigo-100">
-                        <p class="text-xs text-gray-500 mb-1">Format: <code class="bg-gray-100 px-1 rounded">Max m, Anna w, Kim d</code></p>
-                        <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1"></i>Ohne Angabe = weiblich</p>
+                        <p class="text-xs text-gray-500 mb-1">Format: <code class="bg-gray-100 px-1 rounded">Max ms, Anna w, Kim d</code> &nbsp;(<code class="bg-gray-100 px-1 rounded">s</code> = sportlich)</p>
+                        <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1"></i>Ohne Angabe = weiblich, nicht sportlich</p>
                         <textarea id="bulk-input" rows="3" placeholder="Max m&#10;Anna w&#10;Kim d"
                             class="w-full rounded border p-2 text-xs font-mono focus:border-indigo-500 focus:outline-none"></textarea>
                         <p id="bulk-result-msg" class="text-xs text-indigo-700 hidden mt-1"></p>
