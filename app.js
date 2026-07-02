@@ -1,54 +1,54 @@
+// app.js — DOM/State der App. Reine Logik (Parser, Validierung, Team-Verteilung) liegt in core.js (window.TG).
+const {
+    WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES, TIME_RE,
+    sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
+    bulkParse, parseCsvImport, escapeCsv,
+    distributeTeams, enforceApart, validateBackup
+} = window.TG;
+
 // STATE
 let classes = [], classIdCounter = 1, stuIdCounter = 1;
 let activeClassId = null, selAttendClassId = null;
 let persons = [], personIdCounter = 1;
+// personsManual: true, wenn die Teilnehmerliste von Hand gepflegt wurde (dann vor Überschreiben warnen)
+let personsManual = false;
+// apartPairs: [["Anna","Max"], ...] — Paare, die nicht ins gleiche Team sollen (Namensvergleich case-insensitiv)
+let apartPairs = [];
 // attendanceData: { [classId]: { [dateStr]: { date, weekday, records: { [studentId]: {status, reasonCategory, note} } } } }
 let attendanceData = {};
-// currentSessionRecords: { [studentId]: {status:'present'|'absent', reasonCategory:'', note:''} } for the class/date currently shown in the Anwesenheit tab
+// currentSessionRecords: { [studentId]: {status:'present'|'absent', reasonCategory:'', note:''} } für Klasse/Datum im Anwesenheits-Tab
 let currentSessionRecords = {};
+let attendanceDirty = false;
+let statsSort = { key: 'name', dir: 1 };
 
 const GENDER_ICONS = {
-    female:  '<i class="fas fa-venus text-pink-500" title="Weiblich"></i>',
-    male:    '<i class="fas fa-mars text-blue-500" title="Männlich"></i>',
-    diverse: '<i class="fas fa-genderless text-purple-500" title="Divers"></i>'
+    female:  '<i class="fas fa-venus text-pink-500" title="Weiblich" aria-hidden="true"></i><span class="sr-only">weiblich</span>',
+    male:    '<i class="fas fa-mars text-blue-500" title="Männlich" aria-hidden="true"></i><span class="sr-only">männlich</span>',
+    diverse: '<i class="fas fa-genderless text-purple-500" title="Divers" aria-hidden="true"></i><span class="sr-only">divers</span>'
 };
-// Nur diese drei Werte dürfen je in s.gender landen; alles andere fällt auf 'diverse' zurück,
-// damit GENDER_ICONS[gender] nie undefined in innerHTML schreibt.
-function sanitizeGender(g) { return (g === 'female' || g === 'male' || g === 'diverse') ? g : 'diverse'; }
 function genderIconEl(g) { const span = document.createElement('span'); span.innerHTML = GENDER_ICONS[sanitizeGender(g)]; return span; }
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const TIME_RE = /^\d{2}:\d{2}$/;
-
-const WEEKDAYS = ['Mo','Di','Mi','Do','Fr','Sa','So'];
-const WEEKDAYS_FULL = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
-const REASON_CATEGORIES = ['Krank','Verletzt','Entschuldigt','Unentschuldigt','Sonstiges'];
-
-function todayStr() {
-    const d = new Date();
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-}
-function getWeekdayIndex(dateStr) {
-    return (new Date(dateStr + 'T00:00:00').getDay() + 6) % 7;
-}
-// Schweizer Schuljahr: Semester 1 = August–Januar, Semester 2 = Februar–Juli.
-function getSemester(dateStr) {
-    const month = parseInt(dateStr.slice(5, 7), 10);
-    return (month >= 8 || month === 1) ? 1 : 2;
-}
-function formatDateDisplay(dateStr) {
-    const [y, m, d] = dateStr.split('-');
-    return `${d}.${m}.${y}`;
-}
 
 // STORAGE
+let storageWarned = false;
+function storageWarn() {
+    if (storageWarned) return;
+    storageWarned = true;
+    const el = document.getElementById('storage-warning');
+    el.classList.remove('hidden');
+}
+document.getElementById('storage-warning-close').addEventListener('click', () => document.getElementById('storage-warning').classList.add('hidden'));
+
 function saveClasses() {
-    try { localStorage.setItem('tg2_classes', JSON.stringify(classes)); localStorage.setItem('tg2_classId', String(classIdCounter)); localStorage.setItem('tg2_stuId', String(stuIdCounter)); } catch(e) {}
+    try { localStorage.setItem('tg2_classes', JSON.stringify(classes)); localStorage.setItem('tg2_classId', String(classIdCounter)); localStorage.setItem('tg2_stuId', String(stuIdCounter)); } catch(e) { storageWarn(); }
 }
 function savePersons() {
-    try { localStorage.setItem('tg2_persons', JSON.stringify(persons)); localStorage.setItem('tg2_personId', String(personIdCounter)); } catch(e) {}
+    try { localStorage.setItem('tg2_persons', JSON.stringify(persons)); localStorage.setItem('tg2_personId', String(personIdCounter)); localStorage.setItem('tg2_personsManual', personsManual ? '1' : '0'); } catch(e) { storageWarn(); }
 }
 function saveAttendanceData() {
-    try { localStorage.setItem('tg2_attendance', JSON.stringify(attendanceData)); } catch(e) {}
+    try { localStorage.setItem('tg2_attendance', JSON.stringify(attendanceData)); } catch(e) { storageWarn(); }
+}
+function saveApartPairs() {
+    try { localStorage.setItem('tg2_apart', JSON.stringify(apartPairs)); } catch(e) { storageWarn(); }
 }
 function loadStorage() {
     try {
@@ -59,8 +59,10 @@ function loadStorage() {
                 classes = parsed;
                 classes.forEach(cls => {
                     if (!Array.isArray(cls.students)) cls.students = [];
+                    if (!Array.isArray(cls.formerStudents)) cls.formerStudents = [];
                     if (!Array.isArray(cls.schedule)) cls.schedule = [];
                     cls.students.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; });
+                    cls.formerStudents.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; });
                 });
                 classIdCounter = parseInt(localStorage.getItem('tg2_classId')||'1',10) || 1;
                 stuIdCounter = parseInt(localStorage.getItem('tg2_stuId')||'1',10) || 1;
@@ -75,19 +77,145 @@ function loadStorage() {
                 personIdCounter = parseInt(localStorage.getItem('tg2_personId')||'1',10) || 1;
             }
         }
+        personsManual = localStorage.getItem('tg2_personsManual') === '1';
         const a = localStorage.getItem('tg2_attendance');
         if (a) {
             const parsed = JSON.parse(a);
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) attendanceData = parsed;
         }
+        const ap = localStorage.getItem('tg2_apart');
+        if (ap) {
+            const parsed = JSON.parse(ap);
+            if (Array.isArray(parsed)) apartPairs = parsed.filter(x => Array.isArray(x) && x.length === 2 && typeof x[0] === 'string' && typeof x[1] === 'string');
+        }
     } catch(e) {}
 }
 
+// MODAL-DIALOGE (ersetzen alert/confirm/prompt)
+const $modalOverlay = document.getElementById('modal-overlay');
+const $modalTitle   = document.getElementById('modal-title');
+const $modalMessage = document.getElementById('modal-message');
+const $modalInput   = document.getElementById('modal-input');
+const $modalHint    = document.getElementById('modal-input-hint');
+const $modalOk      = document.getElementById('modal-ok');
+const $modalCancel  = document.getElementById('modal-cancel');
+let modalResolve = null, modalHasInput = false, modalPrevFocus = null;
+
+function showModal({ title = '', message = '', input = false, inputType = 'text', value = '', placeholder = '', hint = '', okLabel = 'OK', cancelLabel = null, danger = false }) {
+    return new Promise(resolve => {
+        modalResolve = resolve; modalHasInput = input;
+        modalPrevFocus = document.activeElement;
+        $modalTitle.textContent = title;
+        $modalTitle.classList.toggle('hidden', !title);
+        $modalMessage.textContent = message;
+        $modalInput.classList.toggle('hidden', !input);
+        $modalHint.classList.toggle('hidden', !hint);
+        $modalHint.textContent = hint;
+        if (input) { $modalInput.type = inputType; $modalInput.value = value; $modalInput.placeholder = placeholder; }
+        $modalOk.textContent = okLabel;
+        $modalOk.className = danger
+            ? 'px-4 py-2 text-sm rounded-md text-white bg-red-600 hover:bg-red-700 font-medium'
+            : 'px-4 py-2 text-sm rounded-md text-white bg-indigo-600 hover:bg-indigo-700 font-medium';
+        $modalCancel.textContent = cancelLabel || 'Abbrechen';
+        $modalCancel.classList.toggle('hidden', cancelLabel === null && !input);
+        $modalOverlay.classList.remove('hidden');
+        (input ? $modalInput : $modalOk).focus();
+        if (input) $modalInput.select();
+    });
+}
+function closeModal(result) {
+    if (!modalResolve) return;
+    $modalOverlay.classList.add('hidden');
+    const resolve = modalResolve; modalResolve = null;
+    if (modalPrevFocus && typeof modalPrevFocus.focus === 'function') modalPrevFocus.focus();
+    resolve(result);
+}
+$modalOk.addEventListener('click', () => closeModal(modalHasInput ? $modalInput.value : true));
+$modalCancel.addEventListener('click', () => closeModal(modalHasInput ? null : false));
+$modalOverlay.addEventListener('mousedown', e => { if (e.target === $modalOverlay) closeModal(modalHasInput ? null : false); });
+document.addEventListener('keydown', e => {
+    if ($modalOverlay.classList.contains('hidden')) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeModal(modalHasInput ? null : false); }
+    if (e.key === 'Enter' && document.activeElement !== $modalCancel) { e.preventDefault(); closeModal(modalHasInput ? $modalInput.value : true); }
+});
+const uiAlert   = (message, title = '') => showModal({ title, message });
+const uiConfirm = (message, opts = {}) => showModal({ message, cancelLabel: 'Abbrechen', ...opts });
+const uiPrompt  = (message, opts = {}) => showModal({ message, input: true, cancelLabel: 'Abbrechen', ...opts });
+
+// TOASTS + UNDO
+function showToast(message, { undo = null, duration = 6000 } = {}) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast bg-gray-900 text-white text-sm rounded-xl shadow-lg px-4 py-2.5 flex items-center gap-3 fade-in';
+    toast.setAttribute('role', 'status');
+    const span = document.createElement('span');
+    span.textContent = message;
+    toast.appendChild(span);
+    let removed = false;
+    const remove = () => { if (removed) return; removed = true; toast.remove(); };
+    if (undo) {
+        const btn = document.createElement('button');
+        btn.className = 'text-indigo-300 hover:text-indigo-100 font-semibold flex-shrink-0';
+        btn.textContent = 'Rückgängig';
+        btn.addEventListener('click', () => { remove(); undo(); });
+        toast.appendChild(btn);
+    }
+    container.appendChild(toast);
+    setTimeout(remove, duration);
+}
+function snapshotState() {
+    return {
+        classes: structuredClone(classes),
+        attendanceData: structuredClone(attendanceData),
+        persons: structuredClone(persons),
+        classIdCounter, stuIdCounter, personIdCounter,
+        activeClassId, selAttendClassId, personsManual
+    };
+}
+function restoreState(snap) {
+    classes = snap.classes; attendanceData = snap.attendanceData; persons = snap.persons;
+    classIdCounter = snap.classIdCounter; stuIdCounter = snap.stuIdCounter; personIdCounter = snap.personIdCounter;
+    activeClassId = snap.activeClassId; selAttendClassId = snap.selAttendClassId; personsManual = snap.personsManual;
+    saveClasses(); saveAttendanceData(); savePersons();
+    renderClassList(); renderClassDetail(); renderPersonList();
+    refreshAttendanceSelect(); refreshStatsSelect();
+    const attSel = document.getElementById('attendance-class-select');
+    if (selAttendClassId !== null && classes.find(c => c.id === selAttendClassId)) {
+        attSel.value = String(selAttendClassId);
+        document.getElementById('attendance-empty').classList.add('hidden');
+        document.getElementById('attendance-content').classList.remove('hidden');
+        loadAttendanceSession();
+    } else {
+        attSel.value = '';
+        document.getElementById('attendance-empty').classList.remove('hidden');
+        document.getElementById('attendance-content').classList.add('hidden');
+    }
+    renderStats();
+}
+// Führt eine destruktive Änderung aus und bietet danach "Rückgängig" per Toast an.
+function withUndo(message, mutate) {
+    const snap = snapshotState();
+    mutate();
+    showToast(message, { undo: () => restoreState(snap) });
+}
+
 // TABS
-document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
+tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+tabButtons.forEach((btn, i) => btn.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const dir = e.key === 'ArrowRight' ? 1 : -1;
+    const next = tabButtons[(i + dir + tabButtons.length) % tabButtons.length];
+    next.focus(); switchTab(next.dataset.tab);
+}));
 function switchTab(tab) {
     ['classes','attendance','stats','teams'].forEach(t => document.getElementById('tab-'+t).classList.toggle('hidden', t !== tab));
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
+    tabButtons.forEach(btn => {
+        const active = btn.dataset.tab === tab;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', String(active));
+        btn.tabIndex = active ? 0 : -1;
+    });
     if (tab === 'attendance') refreshAttendanceSelect();
     if (tab === 'stats') refreshStatsSelect();
     if (tab === 'teams') renderPersonList();
@@ -99,16 +227,19 @@ function createScheduleRow(container, entry) {
     row.className = 'flex items-center gap-1.5 schedule-row';
     const sel = document.createElement('select');
     sel.className = 'schedule-weekday border rounded-md p-1.5 text-xs bg-white focus:border-indigo-500 focus:outline-none';
+    sel.setAttribute('aria-label', 'Wochentag');
     sel.innerHTML = '<option value="">Tag</option>' + WEEKDAYS.map((w, i) => `<option value="${i}">${w}</option>`).join('');
     if (entry && entry.weekday !== undefined && entry.weekday !== null) sel.value = String(entry.weekday);
     const time = document.createElement('input');
     time.type = 'time';
+    time.setAttribute('aria-label', 'Uhrzeit');
     time.className = 'schedule-time border rounded-md p-1.5 text-xs flex-1 focus:border-indigo-500 focus:outline-none';
     if (entry && entry.time) time.value = entry.time;
     const rm = document.createElement('button');
     rm.type = 'button';
     rm.className = 'text-gray-300 hover:text-red-500 px-1';
-    rm.innerHTML = '<i class="fas fa-times text-xs"></i>';
+    rm.innerHTML = '<i class="fas fa-times text-xs" aria-hidden="true"></i>';
+    rm.setAttribute('aria-label', 'Termin entfernen');
     rm.addEventListener('click', () => row.remove());
     row.appendChild(sel); row.appendChild(time); row.appendChild(rm);
     container.appendChild(row);
@@ -149,7 +280,7 @@ function doCreateClass() {
     if (!name) return;
     if (classes.find(c => c.name.toLowerCase() === name.toLowerCase())) { $newClassErr.textContent = `Eine Klasse "${name}" existiert bereits.`; $newClassErr.classList.remove('hidden'); return; }
     const schedule = readScheduleRows($newClassScheduleRows);
-    classes.push({ id: classIdCounter++, name, students: [], schedule });
+    classes.push({ id: classIdCounter++, name, students: [], formerStudents: [], schedule });
     saveClasses();
     $newClassForm.classList.add('hidden'); resetNewClassForm();
     renderClassList();
@@ -163,7 +294,7 @@ function renderClassList() {
         const noMsg = document.createElement('li');
         noMsg.id = 'no-classes-msg';
         noMsg.className = 'text-center text-gray-400 text-sm py-10';
-        noMsg.innerHTML = '<i class="fas fa-graduation-cap text-3xl mb-2 opacity-30 block"></i>Noch keine Klassen angelegt.';
+        noMsg.innerHTML = '<i class="fas fa-graduation-cap text-3xl mb-2 opacity-30 block" aria-hidden="true"></i>Noch keine Klassen angelegt.';
         list.appendChild(noMsg);
         return;
     }
@@ -171,8 +302,9 @@ function renderClassList() {
         const isActive = cls.id === activeClassId;
         const li = document.createElement('li');
         li.className = `flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${isActive ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300 hover:bg-indigo-50'}`;
-        const left = document.createElement('div');
-        left.className = 'flex items-center gap-2 flex-1 min-w-0';
+        const left = document.createElement('button');
+        left.type = 'button';
+        left.className = 'flex items-center gap-2 flex-1 min-w-0 text-left';
         const nameSpan = document.createElement('span');
         nameSpan.className = 'font-semibold truncate text-sm';
         nameSpan.textContent = cls.name;
@@ -186,7 +318,9 @@ function renderClassList() {
         [['fa-pen','Umbenennen',() => renameClass(cls.id)],['fa-trash-alt','Löschen',() => deleteClass(cls.id)]].forEach(([icon, title, fn]) => {
             const btn = document.createElement('button');
             btn.className = `p-1.5 rounded text-xs transition-colors ${isActive ? 'text-indigo-200 hover:text-white hover:bg-white hover:bg-opacity-20' : 'text-gray-300 hover:text-indigo-500 hover:bg-indigo-50'}`;
-            btn.innerHTML = `<i class="fas ${icon}"></i>`; btn.title = title;
+            btn.innerHTML = `<i class="fas ${icon}" aria-hidden="true"></i>`;
+            btn.title = title;
+            btn.setAttribute('aria-label', `Klasse "${cls.name}" ${title.toLowerCase()}`);
             btn.addEventListener('click', e => { e.stopPropagation(); fn(); });
             actions.appendChild(btn);
         });
@@ -197,24 +331,28 @@ function renderClassList() {
 
 function selectClass(id) { activeClassId = id; renderClassList(); renderClassDetail(); }
 
-function renameClass(id) {
+async function renameClass(id) {
     const cls = classes.find(c => c.id === id);
     if (!cls) return;
-    const n = prompt('Neuer Klassenname:', cls.name);
+    const n = await uiPrompt('Neuer Klassenname:', { title: 'Klasse umbenennen', value: cls.name });
     if (!n || !n.trim()) return;
     const t = n.trim();
-    if (classes.find(c => c.id !== id && c.name.toLowerCase() === t.toLowerCase())) { alert(`Eine Klasse "${t}" existiert bereits.`); return; }
+    if (classes.find(c => c.id !== id && c.name.toLowerCase() === t.toLowerCase())) { await uiAlert(`Eine Klasse "${t}" existiert bereits.`); return; }
     cls.name = t; saveClasses(); renderClassList(); renderClassDetail();
 }
 
-function deleteClass(id) {
+async function deleteClass(id) {
     const cls = classes.find(c => c.id === id);
-    if (!cls || !confirm(`Klasse "${cls.name}" wirklich löschen? Damit werden auch alle erfassten Anwesenheiten dieser Klasse gelöscht.`)) return;
-    classes = classes.filter(c => c.id !== id);
-    if (activeClassId === id) activeClassId = null;
-    if (selAttendClassId === id) { selAttendClassId = null; currentSessionRecords = {}; }
-    delete attendanceData[id];
-    saveClasses(); saveAttendanceData(); renderClassList(); renderClassDetail();
+    if (!cls) return;
+    const ok = await uiConfirm(`Klasse "${cls.name}" wirklich löschen? Damit werden auch alle erfassten Anwesenheiten dieser Klasse gelöscht.`, { title: 'Klasse löschen', okLabel: 'Löschen', danger: true });
+    if (!ok) return;
+    withUndo(`Klasse "${cls.name}" gelöscht.`, () => {
+        classes = classes.filter(c => c.id !== id);
+        if (activeClassId === id) activeClassId = null;
+        if (selAttendClassId === id) { selAttendClassId = null; currentSessionRecords = {}; attendanceDirty = false; updateDirtyHint(); }
+        delete attendanceData[id];
+        saveClasses(); saveAttendanceData(); renderClassList(); renderClassDetail();
+    });
 }
 
 function renderClassDetail() {
@@ -276,32 +414,47 @@ document.getElementById('detail-schedule-save-btn').addEventListener('click', ()
     renderScheduleDisplayBadges(cls);
 });
 
-document.getElementById('add-student-form').addEventListener('submit', e => {
+document.getElementById('add-student-form').addEventListener('submit', async e => {
     e.preventDefault();
     const name = document.getElementById('student-name-input').value.trim();
     const gender = document.querySelector('input[name="student-gender"]:checked').value;
     const sporty = document.getElementById('student-sporty-input').checked;
-    const errEl = document.getElementById('student-error-msg');
     if (!name || !activeClassId) return;
     const cls = classes.find(c => c.id === activeClassId);
     if (!cls) return;
     if (cls.students.find(s => s.name.toLowerCase() === name.toLowerCase())) {
-        errEl.textContent = `"${name}" ist bereits in dieser Klasse.`; errEl.classList.remove('hidden');
-        setTimeout(() => errEl.classList.add('hidden'), 3000); return;
+        // Zwei Kinder mit gleichem Vornamen sind real möglich — nachfragen statt blockieren.
+        const ok = await uiConfirm(`"${name}" ist bereits in dieser Klasse. Trotzdem hinzufügen (z.B. zweites Kind mit gleichem Namen)? Tipp: Mit Initial unterscheiden, z.B. "${name} M".`, { title: 'Doppelter Name', okLabel: 'Trotzdem hinzufügen' });
+        if (!ok) return;
     }
     cls.students.push({ id: stuIdCounter++, name, gender, sporty });
     saveClasses();
     document.getElementById('student-name-input').value = '';
     document.getElementById('student-sporty-input').checked = false;
-    errEl.classList.add('hidden');
     renderClassDetail();
+    document.getElementById('student-name-input').focus();
 });
 
+// Hat der/die Schüler(in) erfasste Anwesenheiten? Dann beim Entfernen als "ehemalig"
+// archivieren, damit die Auswertung die Historie behalten kann.
+function studentHasAttendance(clsId, studentId) {
+    const sessions = attendanceData[clsId];
+    if (!sessions) return false;
+    return Object.values(sessions).some(session => session.records && session.records[studentId]);
+}
 function removeStudent(studentId) {
     const cls = classes.find(c => c.id === activeClassId);
     if (!cls) return;
-    cls.students = cls.students.filter(s => s.id !== studentId);
-    saveClasses(); renderClassDetail();
+    const student = cls.students.find(s => s.id === studentId);
+    if (!student) return;
+    withUndo(`"${student.name}" entfernt.`, () => {
+        cls.students = cls.students.filter(s => s.id !== studentId);
+        if (studentHasAttendance(cls.id, studentId)) {
+            if (!Array.isArray(cls.formerStudents)) cls.formerStudents = [];
+            cls.formerStudents.push({ id: student.id, name: student.name, gender: student.gender, sporty: student.sporty === true });
+        }
+        saveClasses(); renderClassDetail();
+    });
 }
 
 function renderStudentList(cls) {
@@ -310,7 +463,7 @@ function renderStudentList(cls) {
     if (cls.students.length === 0) {
         const li = document.createElement('li');
         li.className = 'text-center text-gray-400 text-sm py-8';
-        li.innerHTML = '<i class="fas fa-user-plus text-2xl mb-2 opacity-30 block"></i>Noch keine Schüler eingetragen.';
+        li.innerHTML = '<i class="fas fa-user-plus text-2xl mb-2 opacity-30 block" aria-hidden="true"></i>Noch keine Schüler eingetragen.';
         ul.appendChild(li); return;
     }
     cls.students.forEach(s => {
@@ -324,13 +477,16 @@ function renderStudentList(cls) {
         actions.className = 'flex items-center gap-0.5 flex-shrink-0';
         const sportyBtn = document.createElement('button');
         sportyBtn.className = `text-xs p-1 rounded transition-colors ${s.sporty ? 'text-emerald-500 hover:text-emerald-700' : 'text-gray-200 hover:text-emerald-400'}`;
-        sportyBtn.innerHTML = '<i class="fas fa-person-running"></i>';
+        sportyBtn.innerHTML = '<i class="fas fa-person-running" aria-hidden="true"></i>';
         sportyBtn.title = s.sporty ? 'Sportlich (klicken zum Ändern)' : 'Nicht sportlich (klicken zum Ändern)';
+        sportyBtn.setAttribute('aria-label', `${s.name}: ${s.sporty ? 'sportlich' : 'nicht sportlich'} — umschalten`);
+        sportyBtn.setAttribute('aria-pressed', String(s.sporty === true));
         sportyBtn.addEventListener('click', () => { s.sporty = !s.sporty; saveClasses(); renderStudentList(cls); });
         const delBtn = document.createElement('button');
         delBtn.className = 'text-gray-200 hover:text-red-500 text-xs p-1 transition-colors';
-        delBtn.innerHTML = '<i class="fas fa-times"></i>';
+        delBtn.innerHTML = '<i class="fas fa-times" aria-hidden="true"></i>';
         delBtn.title = 'Schüler(in) entfernen';
+        delBtn.setAttribute('aria-label', `${s.name} entfernen`);
         delBtn.addEventListener('click', () => removeStudent(s.id));
         actions.appendChild(sportyBtn); actions.appendChild(delBtn);
         li.appendChild(left); li.appendChild(actions); ul.appendChild(li);
@@ -361,15 +517,18 @@ document.getElementById('class-bulk-import-btn').addEventListener('click', () =>
 });
 
 // KLASSEN IMPORT / EXPORT
-document.getElementById('export-classes-btn').addEventListener('click', () => {
-    if (classes.length === 0) { alert('Keine Klassen zum Exportieren vorhanden.'); return; }
-    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender, sporty: s.sporty === true })) }));
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `klassen-export-${new Date().toISOString().slice(0,10)}.json`;
+    a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+document.getElementById('export-classes-btn').addEventListener('click', async () => {
+    if (classes.length === 0) { await uiAlert('Keine Klassen zum Exportieren vorhanden.'); return; }
+    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender, sporty: s.sporty === true })) }));
+    downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `klassen-export-${todayStr()}.json`);
 });
 
 document.getElementById('import-format-help-btn').addEventListener('click', () => document.getElementById('import-format-help').classList.toggle('hidden'));
@@ -380,7 +539,7 @@ $importFileInput.addEventListener('change', () => {
     const file = $importFileInput.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
         try {
             let imported = 0, importedStudents = 0;
             if (file.name.toLowerCase().endsWith('.json')) {
@@ -394,7 +553,7 @@ $importFileInput.addEventListener('change', () => {
                         const schedule = Array.isArray(entry.schedule)
                             ? entry.schedule.filter(e => e && Number.isInteger(e.weekday) && e.weekday >= 0 && e.weekday <= 6 && typeof e.time === 'string' && TIME_RE.test(e.time)).map(e => ({ weekday: e.weekday, time: e.time }))
                             : [];
-                        cls = { id: classIdCounter++, name, students: [], schedule }; classes.push(cls); imported++;
+                        cls = { id: classIdCounter++, name, students: [], formerStudents: [], schedule }; classes.push(cls); imported++;
                     }
                     (entry.students || []).forEach(s => {
                         const sName = (typeof s === 'string' ? s : s.name || '').trim();
@@ -407,28 +566,18 @@ $importFileInput.addEventListener('change', () => {
                     });
                 });
             } else {
-                // CSV / TXT: "Klasse;Name;Geschlecht;Sportlich" (Sportlich optional: s/ja/x/1) pro Zeile
-                const lines = reader.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-                lines.forEach(line => {
-                    const parts = line.split(/[;,]/).map(p => p.trim());
-                    if (parts.length < 2) return;
-                    const [className, studentName, genderRaw, sportyRaw] = parts;
-                    if (!className || !studentName) return;
-                    let cls = classes.find(c => c.name.toLowerCase() === className.toLowerCase());
-                    if (!cls) { cls = { id: classIdCounter++, name: className, students: [], schedule: [] }; classes.push(cls); imported++; }
-                    if (cls.students.find(st => st.name.toLowerCase() === studentName.toLowerCase())) return;
-                    let gender = 'female';
-                    const g = (genderRaw || '').toLowerCase();
-                    if (g.startsWith('m')) gender = 'male'; else if (g.startsWith('d')) gender = 'diverse';
-                    const sporty = /^(s|ja|x|1|sportlich|true)$/i.test(sportyRaw || '');
-                    cls.students.push({ id: stuIdCounter++, name: studentName, gender, sporty });
+                parseCsvImport(reader.result).forEach(row => {
+                    let cls = classes.find(c => c.name.toLowerCase() === row.className.toLowerCase());
+                    if (!cls) { cls = { id: classIdCounter++, name: row.className, students: [], formerStudents: [], schedule: [] }; classes.push(cls); imported++; }
+                    if (cls.students.find(st => st.name.toLowerCase() === row.studentName.toLowerCase())) return;
+                    cls.students.push({ id: stuIdCounter++, name: row.studentName, gender: row.gender, sporty: row.sporty });
                     importedStudents++;
                 });
             }
             saveClasses(); renderClassList(); renderClassDetail();
-            alert(`Import abgeschlossen: ${imported} neue Klasse(n), ${importedStudents} Schüler(innen) hinzugefügt.`);
+            await uiAlert(`Import abgeschlossen: ${imported} neue Klasse(n), ${importedStudents} Schüler(innen) hinzugefügt.`, 'Import');
         } catch (err) {
-            alert('Import fehlgeschlagen: Datei konnte nicht gelesen werden. Bitte ein gültiges JSON (Klassenexport) oder eine CSV mit "Klasse;Name;Geschlecht" verwenden.');
+            await uiAlert('Import fehlgeschlagen: Datei konnte nicht gelesen werden. Bitte ein gültiges JSON (Klassenexport) oder eine CSV mit "Klasse;Name;Geschlecht" verwenden.', 'Import');
         }
         $importFileInput.value = '';
     };
@@ -436,8 +585,30 @@ $importFileInput.addEventListener('change', () => {
 });
 
 // TAB 2: ANWESENHEIT
+const $attendanceSelect = document.getElementById('attendance-class-select');
+const $attendanceDate = document.getElementById('attendance-date-input');
+let lastAttendanceSelectValue = '';
+let lastAttendanceDate = '';
+
+function updateDirtyHint() {
+    document.getElementById('attendance-dirty-hint').classList.toggle('hidden', !attendanceDirty);
+}
+function markAttendanceDirty() {
+    attendanceDirty = true;
+    updateDirtyHint();
+}
+async function confirmDiscardAttendance() {
+    if (!attendanceDirty) return true;
+    const ok = await uiConfirm('Die Anwesenheit für den aktuellen Termin wurde noch nicht gespeichert. Änderungen verwerfen?', { title: 'Ungespeicherte Änderungen', okLabel: 'Verwerfen', danger: true });
+    if (ok) { attendanceDirty = false; updateDirtyHint(); }
+    return ok;
+}
+window.addEventListener('beforeunload', e => {
+    if (attendanceDirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
 function refreshAttendanceSelect() {
-    const sel = document.getElementById('attendance-class-select');
+    const sel = $attendanceSelect;
     const prev = sel.value;
     sel.innerHTML = '<option value="">-- Klasse wählen --</option>';
     classes.forEach(cls => {
@@ -446,11 +617,14 @@ function refreshAttendanceSelect() {
         sel.appendChild(opt);
     });
     if (prev && classes.find(c => String(c.id) === prev)) sel.value = prev;
-    const dateInput = document.getElementById('attendance-date-input');
-    if (!dateInput.value) dateInput.value = todayStr();
+    lastAttendanceSelectValue = sel.value;
+    if (!$attendanceDate.value) $attendanceDate.value = todayStr();
+    lastAttendanceDate = $attendanceDate.value;
 }
 
-document.getElementById('attendance-class-select').addEventListener('change', function() {
+$attendanceSelect.addEventListener('change', async function() {
+    if (!(await confirmDiscardAttendance())) { this.value = lastAttendanceSelectValue; return; }
+    lastAttendanceSelectValue = this.value;
     const id = parseInt(this.value, 10);
     const emptyEl = document.getElementById('attendance-empty');
     const contentEl = document.getElementById('attendance-content');
@@ -463,22 +637,25 @@ document.getElementById('attendance-class-select').addEventListener('change', fu
     loadAttendanceSession();
 });
 
-document.getElementById('attendance-date-input').addEventListener('change', () => {
-    if (selAttendClassId !== null) loadAttendanceSession();
+$attendanceDate.addEventListener('change', async function() {
+    if (selAttendClassId === null) { lastAttendanceDate = this.value; return; }
+    if (!(await confirmDiscardAttendance())) { this.value = lastAttendanceDate; return; }
+    loadAttendanceSession();
 });
 
 function loadAttendanceSession() {
     const cls = classes.find(c => c.id === selAttendClassId);
     if (!cls) return;
-    const dateInput = document.getElementById('attendance-date-input');
-    const dateStr = dateInput.value || todayStr();
-    dateInput.value = dateStr;
+    const dateStr = $attendanceDate.value || todayStr();
+    $attendanceDate.value = dateStr;
+    lastAttendanceDate = dateStr;
     const existing = attendanceData[cls.id] && attendanceData[cls.id][dateStr];
     currentSessionRecords = {};
     cls.students.forEach(s => {
         const rec = existing && existing.records[s.id];
         currentSessionRecords[s.id] = rec ? { status: rec.status, reasonCategory: rec.reasonCategory || '', note: rec.note || '' } : { status: 'present', reasonCategory: '', note: '' };
     });
+    attendanceDirty = false; updateDirtyHint();
     document.getElementById('attendance-saved-msg').classList.add('hidden');
     renderScheduleHint(cls, dateStr);
     renderAttendanceGrid();
@@ -501,11 +678,11 @@ function renderScheduleHint(cls, dateStr) {
 
 document.getElementById('all-present-btn').addEventListener('click', () => {
     Object.keys(currentSessionRecords).forEach(id => { currentSessionRecords[id].status = 'present'; });
-    renderAttendanceGrid();
+    markAttendanceDirty(); renderAttendanceGrid();
 });
 document.getElementById('all-absent-btn').addEventListener('click', () => {
     Object.keys(currentSessionRecords).forEach(id => { currentSessionRecords[id].status = 'absent'; });
-    renderAttendanceGrid();
+    markAttendanceDirty(); renderAttendanceGrid();
 });
 
 function renderAttendanceGrid() {
@@ -523,12 +700,15 @@ function renderAttendanceGrid() {
         const present = rec.status === 'present';
         const card = document.createElement('div');
         card.className = `attendance-card p-3 rounded-xl border-2 select-none ${present ? 'bg-green-50 border-green-400 text-green-900' : 'bg-red-50 border-red-300 text-red-900'}`;
-        const topRow = document.createElement('div');
-        topRow.className = 'flex items-center gap-3 cursor-pointer';
-        topRow.addEventListener('click', () => { rec.status = present ? 'absent' : 'present'; renderAttendanceGrid(); });
+        const topRow = document.createElement('button');
+        topRow.type = 'button';
+        topRow.className = 'flex items-center gap-3 cursor-pointer w-full text-left';
+        topRow.setAttribute('aria-pressed', String(present));
+        topRow.setAttribute('aria-label', `${s.name}: ${present ? 'anwesend' : 'abwesend'} — klicken zum Umschalten`);
+        topRow.addEventListener('click', () => { rec.status = present ? 'absent' : 'present'; markAttendanceDirty(); renderAttendanceGrid(); });
         const checkbox = document.createElement('div');
         checkbox.className = `w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${present ? 'bg-green-500 border-green-500' : 'bg-red-400 border-red-400'}`;
-        checkbox.innerHTML = present ? '<i class="fas fa-check text-white text-xs"></i>' : '<i class="fas fa-times text-white text-xs"></i>';
+        checkbox.innerHTML = present ? '<i class="fas fa-check text-white text-xs" aria-hidden="true"></i>' : '<i class="fas fa-times text-white text-xs" aria-hidden="true"></i>';
         const iconSpan = document.createElement('span'); iconSpan.innerHTML = GENDER_ICONS[sanitizeGender(s.gender)];
         const nameSpan = document.createElement('span'); nameSpan.className = 'font-medium text-sm flex-1 truncate'; nameSpan.textContent = s.name;
         topRow.appendChild(checkbox); topRow.appendChild(iconSpan); topRow.appendChild(nameSpan);
@@ -538,15 +718,17 @@ function renderAttendanceGrid() {
             reasonRow.className = 'flex flex-col sm:flex-row gap-1.5 mt-2 pt-2 border-t border-red-200';
             const sel = document.createElement('select');
             sel.className = 'text-xs border border-red-200 rounded-md p-1.5 bg-white focus:outline-none focus:border-red-400';
+            sel.setAttribute('aria-label', `Abwesenheitsgrund für ${s.name}`);
             sel.innerHTML = '<option value="">Grund wählen…</option>' + REASON_CATEGORIES.map(r => `<option value="${r}">${r}</option>`).join('');
             sel.value = rec.reasonCategory || '';
             sel.addEventListener('click', e => e.stopPropagation());
-            sel.addEventListener('change', e => { rec.reasonCategory = e.target.value; });
+            sel.addEventListener('change', e => { rec.reasonCategory = e.target.value; markAttendanceDirty(); });
             const note = document.createElement('input');
             note.type = 'text'; note.placeholder = 'Notiz (optional)'; note.value = rec.note || '';
+            note.setAttribute('aria-label', `Notiz zur Abwesenheit von ${s.name}`);
             note.className = 'text-xs border border-red-200 rounded-md p-1.5 flex-1 focus:outline-none focus:border-red-400';
             note.addEventListener('click', e => e.stopPropagation());
-            note.addEventListener('input', e => { rec.note = e.target.value; });
+            note.addEventListener('input', e => { rec.note = e.target.value; markAttendanceDirty(); });
             reasonRow.appendChild(sel); reasonRow.appendChild(note);
             card.appendChild(reasonRow);
         }
@@ -557,12 +739,13 @@ function renderAttendanceGrid() {
 document.getElementById('save-attendance-btn').addEventListener('click', () => {
     const cls = classes.find(c => c.id === selAttendClassId);
     if (!cls) return;
-    const dateStr = document.getElementById('attendance-date-input').value || todayStr();
+    const dateStr = $attendanceDate.value || todayStr();
     if (!attendanceData[cls.id]) attendanceData[cls.id] = {};
     const records = {};
     Object.keys(currentSessionRecords).forEach(id => { records[id] = { ...currentSessionRecords[id] }; });
     attendanceData[cls.id][dateStr] = { date: dateStr, weekday: getWeekdayIndex(dateStr), records };
     saveAttendanceData();
+    attendanceDirty = false; updateDirtyHint();
     const msg = document.getElementById('attendance-saved-msg');
     msg.classList.remove('hidden');
     renderAttendanceSessionsList(cls);
@@ -586,34 +769,46 @@ function renderAttendanceSessionsList(cls) {
         li.className = 'flex items-center justify-between bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-sm';
         const left = document.createElement('button');
         left.className = 'flex items-center gap-2 text-left hover:text-indigo-600 transition-colors';
+        left.setAttribute('aria-label', `Termin vom ${formatDateDisplay(session.date)} öffnen`);
         [[ 'font-medium', formatDateDisplay(session.date) ],
          [ 'text-xs text-gray-400', WEEKDAYS[session.weekday] || '' ],
          [ 'text-xs bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full', `Sem. ${getSemester(session.date)}` ],
          [ 'text-xs text-gray-400', `· ${presentN}/${totalN} anwesend` ]].forEach(([cls2, txt]) => {
             const sp = document.createElement('span'); sp.className = cls2; sp.textContent = txt; left.appendChild(sp);
         });
-        left.addEventListener('click', () => { document.getElementById('attendance-date-input').value = session.date; loadAttendanceSession(); });
+        left.addEventListener('click', async () => {
+            if (!(await confirmDiscardAttendance())) return;
+            $attendanceDate.value = session.date;
+            loadAttendanceSession();
+        });
         const delBtn = document.createElement('button');
         delBtn.className = 'text-gray-300 hover:text-red-500 text-xs p-1';
-        delBtn.innerHTML = '<i class="fas fa-trash-alt"></i>';
+        delBtn.innerHTML = '<i class="fas fa-trash-alt" aria-hidden="true"></i>';
+        delBtn.setAttribute('aria-label', `Termin vom ${formatDateDisplay(session.date)} löschen`);
         delBtn.addEventListener('click', () => {
-            if (!confirm(`Termin vom ${formatDateDisplay(session.date)} wirklich löschen?`)) return;
-            delete attendanceData[cls.id][session.date];
-            saveAttendanceData();
-            if (document.getElementById('attendance-date-input').value === session.date) loadAttendanceSession();
-            else renderAttendanceSessionsList(cls);
+            withUndo(`Termin vom ${formatDateDisplay(session.date)} gelöscht.`, () => {
+                delete attendanceData[cls.id][session.date];
+                saveAttendanceData();
+                if ($attendanceDate.value === session.date) loadAttendanceSession();
+                else renderAttendanceSessionsList(cls);
+            });
         });
         li.appendChild(left); li.appendChild(delBtn);
         list.appendChild(li);
     });
 }
 
-document.getElementById('load-to-teams-btn').addEventListener('click', () => {
+document.getElementById('load-to-teams-btn').addEventListener('click', async () => {
     const cls = classes.find(c => c.id === selAttendClassId);
     if (!cls) return;
     const present = cls.students.filter(s => currentSessionRecords[s.id] && currentSessionRecords[s.id].status === 'present');
-    if (present.length === 0) { alert('Keine Schüler(innen) als anwesend markiert.'); return; }
+    if (present.length === 0) { await uiAlert('Keine Schüler(innen) als anwesend markiert.'); return; }
+    if (personsManual && persons.length > 0) {
+        const ok = await uiConfirm(`Die aktuelle Teilnehmerliste (${persons.length} manuell erfasste Person(en)) wird ersetzt. Fortfahren?`, { okLabel: 'Ersetzen' });
+        if (!ok) return;
+    }
     persons = present.map(s => ({ id: personIdCounter++, name: s.name, gender: s.gender, sporty: s.sporty === true }));
+    personsManual = false;
     savePersons();
     document.getElementById('source-banner-text').textContent = `Geladen aus "${cls.name}": ${present.length} von ${cls.students.length} Schüler(innen) anwesend.`;
     document.getElementById('source-banner').classList.remove('hidden');
@@ -637,23 +832,17 @@ function refreshStatsSelect() {
 document.getElementById('stats-class-select').addEventListener('change', renderStats);
 document.getElementById('stats-semester-select').addEventListener('change', renderStats);
 
-function renderStats() {
-    const id = parseInt(document.getElementById('stats-class-select').value, 10);
-    const semesterFilter = document.getElementById('stats-semester-select').value; // 'all' | '1' | '2'
-    const emptyEl = document.getElementById('stats-empty');
-    const contentEl = document.getElementById('stats-content');
-    const exportBtn = document.getElementById('export-stats-btn');
-    const cls = classes.find(c => c.id === id);
-    let sessions = cls && attendanceData[cls.id] ? Object.values(attendanceData[cls.id]).sort((a, b) => a.date.localeCompare(b.date)) : [];
-    if (semesterFilter !== 'all') sessions = sessions.filter(session => getSemester(session.date) === parseInt(semesterFilter, 10));
-    if (!cls || sessions.length === 0) {
-        emptyEl.classList.remove('hidden'); contentEl.classList.add('hidden'); exportBtn.classList.add('hidden');
-        return;
-    }
-    emptyEl.classList.add('hidden'); contentEl.classList.remove('hidden'); exportBtn.classList.remove('hidden');
-    document.getElementById('stats-session-count').textContent = sessions.length;
+document.querySelectorAll('#stats-table th[data-sort-key]').forEach(th => {
+    th.addEventListener('click', () => {
+        const key = th.dataset.sortKey;
+        if (statsSort.key === key) statsSort.dir = -statsSort.dir;
+        else statsSort = { key, dir: key === 'name' ? 1 : -1 };
+        renderStats();
+    });
+});
 
-    const statsRows = cls.students.map(s => {
+function buildStatsRows(cls, sessions) {
+    const rowFor = (s, former) => {
         let present = 0, absent = 0;
         const reasonCounts = {};
         const absences = [];
@@ -670,7 +859,51 @@ function renderStats() {
         });
         const total = present + absent;
         const quote = total > 0 ? Math.round((present / total) * 100) : null;
-        return { student: s, present, absent, quote, reasonCounts, absences };
+        return { student: s, former, present, absent, recorded: total, quote, reasonCounts, absences };
+    };
+    const rows = cls.students.map(s => rowFor(s, false));
+    // Ehemalige Schüler(innen) mit erfasster Historie bleiben in der Auswertung sichtbar.
+    (cls.formerStudents || []).forEach(s => {
+        const row = rowFor(s, true);
+        if (row.recorded > 0) rows.push(row);
+    });
+    return rows;
+}
+
+function sortStatsRows(rows) {
+    const dir = statsSort.dir;
+    const key = statsSort.key;
+    return rows.slice().sort((a, b) => {
+        if (key === 'name') return dir * a.student.name.localeCompare(b.student.name, 'de');
+        const av = a[key] === null ? -1 : a[key];
+        const bv = b[key] === null ? -1 : b[key];
+        if (av !== bv) return dir * (av - bv);
+        return a.student.name.localeCompare(b.student.name, 'de');
+    });
+}
+
+function renderStats() {
+    const id = parseInt(document.getElementById('stats-class-select').value, 10);
+    const semesterFilter = document.getElementById('stats-semester-select').value; // 'all' | '1' | '2'
+    const emptyEl = document.getElementById('stats-empty');
+    const contentEl = document.getElementById('stats-content');
+    const exportBtn = document.getElementById('export-stats-btn');
+    const cls = classes.find(c => c.id === id);
+    let sessions = cls && attendanceData[cls.id] ? Object.values(attendanceData[cls.id]).sort((a, b) => a.date.localeCompare(b.date)) : [];
+    if (semesterFilter !== 'all') sessions = sessions.filter(session => getSemester(session.date) === parseInt(semesterFilter, 10));
+    if (!cls || sessions.length === 0) {
+        emptyEl.classList.remove('hidden'); contentEl.classList.add('hidden'); exportBtn.classList.add('hidden');
+        return;
+    }
+    emptyEl.classList.add('hidden'); contentEl.classList.remove('hidden'); exportBtn.classList.remove('hidden');
+    document.getElementById('stats-session-count').textContent = sessions.length;
+
+    const statsRows = sortStatsRows(buildStatsRows(cls, sessions));
+
+    document.querySelectorAll('#stats-table th[data-sort-key]').forEach(th => {
+        const active = th.dataset.sortKey === statsSort.key;
+        th.setAttribute('aria-sort', active ? (statsSort.dir === 1 ? 'ascending' : 'descending') : 'none');
+        th.querySelector('.sort-arrow').textContent = active ? (statsSort.dir === 1 ? '▲' : '▼') : '';
     });
 
     const tbody = document.getElementById('stats-table-body');
@@ -685,8 +918,18 @@ function renderStats() {
         nameSpan.className = 'font-medium';
         nameSpan.textContent = row.student.name;
         nameTd.appendChild(nameSpan);
+        if (row.former) {
+            const badge = document.createElement('span');
+            badge.className = 'text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full';
+            badge.textContent = 'ehemalig';
+            nameTd.appendChild(badge);
+        }
         const presentTd = document.createElement('td'); presentTd.className = 'text-center px-3 py-2 text-green-700'; presentTd.textContent = row.present;
         const absentTd = document.createElement('td'); absentTd.className = 'text-center px-3 py-2 text-red-600'; absentTd.textContent = row.absent;
+        const recordedTd = document.createElement('td');
+        recordedTd.className = 'text-center px-3 py-2 text-gray-500 text-xs';
+        recordedTd.textContent = `${row.recorded}/${sessions.length}`;
+        recordedTd.title = `An ${row.recorded} von ${sessions.length} Terminen erfasst`;
         const quoteTd = document.createElement('td');
         quoteTd.className = 'text-center px-3 py-2 font-semibold';
         if (row.quote !== null) {
@@ -697,7 +940,7 @@ function renderStats() {
         reasonsTd.className = 'px-3 py-2 text-xs text-gray-500';
         const reasonEntries = Object.entries(row.reasonCounts);
         reasonsTd.textContent = reasonEntries.length ? reasonEntries.map(([k, v]) => `${k}: ${v}`).join(', ') : '–';
-        tr.appendChild(nameTd); tr.appendChild(presentTd); tr.appendChild(absentTd); tr.appendChild(quoteTd); tr.appendChild(reasonsTd);
+        tr.appendChild(nameTd); tr.appendChild(presentTd); tr.appendChild(absentTd); tr.appendChild(recordedTd); tr.appendChild(quoteTd); tr.appendChild(reasonsTd);
         tbody.appendChild(tr);
 
         if (row.absences.length > 0) {
@@ -706,7 +949,7 @@ function renderStats() {
             const detailTr = document.createElement('tr');
             detailTr.className = 'hidden bg-gray-50 border-t border-gray-100';
             const detailTd = document.createElement('td');
-            detailTd.colSpan = 5;
+            detailTd.colSpan = 6;
             detailTd.className = 'px-3 py-2';
             const ul = document.createElement('ul');
             ul.className = 'text-xs text-gray-600 space-y-1';
@@ -735,49 +978,60 @@ function renderStats() {
         }
     });
 
+    // Zusammenfassung (Ø-Zeile)
+    const withQuote = statsRows.filter(r => r.quote !== null);
+    const avgQuote = withQuote.length ? Math.round(withQuote.reduce((sum, r) => sum + r.quote, 0) / withQuote.length) : null;
+    const totalPresent = statsRows.reduce((sum, r) => sum + r.present, 0);
+    const totalAbsent = statsRows.reduce((sum, r) => sum + r.absent, 0);
+    document.getElementById('stats-total-present').textContent = totalPresent;
+    document.getElementById('stats-total-absent').textContent = totalAbsent;
+    document.getElementById('stats-avg-quote').textContent = avgQuote === null ? '–' : `${avgQuote}%`;
+
     exportBtn.onclick = () => exportStatsCsv(cls, statsRows, sessions.length, semesterFilter);
 }
 
 function exportStatsCsv(cls, statsRows, sessionCount, semesterFilter) {
-    // Führendes '='/'+'/'-'/'@' würde in Excel/LibreOffice als Formel ausgeführt (CSV-Injection).
-    const escapeCsv = v => {
-        let s = String(v).replace(/"/g, '""');
-        if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
-        return `"${s}"`;
-    };
-    const lines = [['Name', 'Anwesend', 'Abwesend', 'Quote (%)', 'Gründe', 'Abwesenheits-Details'].map(escapeCsv).join(';')];
+    const lines = [['Name', 'Status', 'Anwesend', 'Abwesend', 'Erfasst (von ' + sessionCount + ')', 'Quote (%)', 'Gründe', 'Abwesenheits-Details'].map(escapeCsv).join(';')];
     statsRows.forEach(row => {
         const reasons = Object.entries(row.reasonCounts).map(([k, v]) => `${k}: ${v}`).join(', ');
         const details = (row.absences || []).map(a => `${formatDateDisplay(a.date)} ${a.reasonCategory || 'Ohne Angabe'}${a.note ? ` (${a.note})` : ''}`).join(' | ');
-        lines.push([row.student.name, row.present, row.absent, row.quote === null ? '' : row.quote, reasons, details].map(escapeCsv).join(';'));
+        lines.push([row.student.name, row.former ? 'ehemalig' : 'aktiv', row.present, row.absent, row.recorded, row.quote === null ? '' : row.quote, reasons, details].map(escapeCsv).join(';'));
     });
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
     const semesterSuffix = semesterFilter === '1' ? '-Semester1' : semesterFilter === '2' ? '-Semester2' : '';
-    const a = document.createElement('a');
-    a.href = url; a.download = `anwesenheit-${cls.name}${semesterSuffix}-${todayStr()}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `anwesenheit-${cls.name}${semesterSuffix}-${todayStr()}.csv`);
 }
 
 // TAB 3: TEAMS
-function addPerson(name, gender, sporty = false) {
-    if (persons.find(p => p.name.toLowerCase() === name.toLowerCase())) { showAddError(`"${name}" ist bereits in der Liste.`); return false; }
-    persons.push({ id: personIdCounter++, name, gender, sporty: sporty === true }); savePersons(); renderPersonList(); return true;
+async function addPerson(name, gender, sporty = false, { confirmDuplicate = false } = {}) {
+    if (persons.find(p => p.name.toLowerCase() === name.toLowerCase())) {
+        if (!confirmDuplicate) { showAddError(`"${name}" ist bereits in der Liste.`); return false; }
+        const ok = await uiConfirm(`"${name}" ist bereits in der Liste. Trotzdem hinzufügen (z.B. zweite Person mit gleichem Namen)?`, { title: 'Doppelter Name', okLabel: 'Trotzdem hinzufügen' });
+        if (!ok) return false;
+    }
+    persons.push({ id: personIdCounter++, name, gender, sporty: sporty === true });
+    personsManual = true;
+    savePersons(); renderPersonList(); return true;
 }
 function showAddError(msg) {
     const el = document.getElementById('add-error-msg'); el.textContent = msg; el.classList.remove('hidden');
     setTimeout(() => el.classList.add('hidden'), 3000);
 }
-function removePerson(id) { persons = persons.filter(p => p.id !== id); savePersons(); renderPersonList(); }
+function removePerson(id) {
+    const p = persons.find(x => x.id === id);
+    if (!p) return;
+    withUndo(`"${p.name}" aus Teilnehmerliste entfernt.`, () => {
+        persons = persons.filter(x => x.id !== id); savePersons(); renderPersonList();
+    });
+}
 
-document.getElementById('add-person-form').addEventListener('submit', e => {
+document.getElementById('add-person-form').addEventListener('submit', async e => {
     e.preventDefault();
     const name = document.getElementById('person-name').value.trim();
     const gender = document.querySelector('input[name="gender"]:checked').value;
     const sporty = document.getElementById('person-sporty-input').checked;
     if (!name) return;
-    const ok = addPerson(name, gender, sporty);
+    const ok = await addPerson(name, gender, sporty, { confirmDuplicate: true });
     if (ok) {
         document.getElementById('person-name').value = '';
         document.getElementById('person-sporty-input').checked = false;
@@ -786,12 +1040,15 @@ document.getElementById('add-person-form').addEventListener('submit', e => {
     document.getElementById('person-name').focus();
 });
 
-document.getElementById('clear-all-btn').addEventListener('click', () => {
-    if (!confirm('Alle Teilnehmer löschen?')) return;
-    persons = []; savePersons();
-    document.getElementById('source-banner').classList.add('hidden');
-    document.getElementById('results-section').classList.add('hidden');
-    renderPersonList();
+document.getElementById('clear-all-btn').addEventListener('click', async () => {
+    const ok = await uiConfirm('Alle Teilnehmer löschen?', { okLabel: 'Löschen', danger: true });
+    if (!ok) return;
+    withUndo('Teilnehmerliste geleert.', () => {
+        persons = []; personsManual = false; savePersons();
+        document.getElementById('source-banner').classList.add('hidden');
+        document.getElementById('results-section').classList.add('hidden');
+        renderPersonList();
+    });
 });
 
 function renderPersonList() {
@@ -800,55 +1057,44 @@ function renderPersonList() {
     const clearBtn = document.getElementById('clear-all-btn');
     document.getElementById('total-count').textContent = persons.length;
     list.innerHTML = '';
-    if (persons.length === 0) { list.appendChild(emptyEl); clearBtn.classList.add('hidden'); return; }
-    clearBtn.classList.remove('hidden');
-    persons.forEach(p => {
-        const li = document.createElement('li');
-        li.className = 'flex justify-between items-center bg-white p-2.5 rounded-lg shadow-sm border border-gray-100 fade-in';
-        const inner = document.createElement('div'); inner.className = 'flex items-center gap-2';
-        const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[sanitizeGender(p.gender)];
-        const name = document.createElement('span'); name.className = 'text-sm font-medium text-gray-700'; name.textContent = p.name;
-        inner.appendChild(icon); inner.appendChild(name);
-        const btn = document.createElement('button');
-        btn.className = 'text-gray-200 hover:text-red-500 text-xs transition-colors';
-        btn.innerHTML = '<i class="fas fa-times"></i>';
-        btn.addEventListener('click', () => removePerson(p.id));
-        li.appendChild(inner); li.appendChild(btn); list.appendChild(li);
-    });
+    if (persons.length === 0) { list.appendChild(emptyEl); clearBtn.classList.add('hidden'); }
+    else {
+        clearBtn.classList.remove('hidden');
+        persons.forEach(p => {
+            const li = document.createElement('li');
+            li.className = 'flex justify-between items-center bg-white p-2.5 rounded-lg shadow-sm border border-gray-100 fade-in';
+            const inner = document.createElement('div'); inner.className = 'flex items-center gap-2';
+            const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[sanitizeGender(p.gender)];
+            const name = document.createElement('span'); name.className = 'text-sm font-medium text-gray-700'; name.textContent = p.name;
+            inner.appendChild(icon); inner.appendChild(name);
+            const btn = document.createElement('button');
+            btn.className = 'text-gray-200 hover:text-red-500 text-xs transition-colors';
+            btn.innerHTML = '<i class="fas fa-times" aria-hidden="true"></i>';
+            btn.setAttribute('aria-label', `${p.name} entfernen`);
+            btn.addEventListener('click', () => removePerson(p.id));
+            li.appendChild(inner); li.appendChild(btn); list.appendChild(li);
+        });
+    }
+    refreshApartSelects();
+    renderApartList();
 }
 
 document.getElementById('toggle-bulk-btn').addEventListener('click', () => document.getElementById('bulk-area').classList.toggle('hidden'));
 document.getElementById('add-bulk-btn').addEventListener('click', () => {
     const text = document.getElementById('bulk-input').value.trim();
     if (!text) return;
-    const { added, skipped, defaults } = bulkParse(text, addPerson);
+    const { added, skipped, defaults } = bulkParse(text, (name, gender, sporty) => {
+        if (persons.find(p => p.name.toLowerCase() === name.toLowerCase())) return false;
+        persons.push({ id: personIdCounter++, name, gender, sporty: sporty === true });
+        return true;
+    });
+    personsManual = true;
+    savePersons(); renderPersonList();
     document.getElementById('bulk-input').value = '';
     showBulkMsg('bulk-result-msg', added, skipped, defaults);
     setTimeout(() => { document.getElementById('bulk-result-msg').classList.add('hidden'); document.getElementById('bulk-area').classList.add('hidden'); }, 4000);
 });
 
-// BULK PARSER (gemeinsam) — Tag am Zeilenende: Geschlecht (m/w/d), optional gefolgt von s = sportlich, z.B. "Max ms"
-function bulkParse(text, addFn) {
-    const entries = text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-    let added = 0, skipped = 0, defaults = 0;
-    entries.forEach(entry => {
-        let gender = 'female', sporty = false, cleanName = entry, hadTag = false;
-        const match = entry.match(/\s+\(?((?:[mwd]s?)|s)\)?$/i);
-        if (match) {
-            hadTag = true;
-            const tag = match[1].toLowerCase();
-            const g = tag[0];
-            if (g === 'm') gender = 'male'; else if (g === 'd') gender = 'diverse';
-            sporty = tag.endsWith('s');
-            cleanName = entry.substring(0, match.index).trim();
-        }
-        cleanName = cleanName.replace(/[\s,:\-]+$/, '').trim();
-        if (!cleanName) return;
-        if (!hadTag) defaults++;
-        if (addFn(cleanName, gender, sporty)) added++; else skipped++;
-    });
-    return { added, skipped, defaults };
-}
 function showBulkMsg(elId, added, skipped, defaults) {
     let msg = `${added} hinzugefügt.`;
     if (skipped  > 0) msg += ` ${skipped} übersprungen (Duplikate).`;
@@ -856,44 +1102,92 @@ function showBulkMsg(elId, added, skipped, defaults) {
     const el = document.getElementById(elId); el.textContent = msg; el.classList.remove('hidden');
 }
 
-// TEAM-GENERIERUNG
-function shuffleArray(arr) {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
-    return a;
+// "NICHT ZUSAMMEN"-REGELN
+function refreshApartSelects() {
+    ['apart-a', 'apart-b'].forEach(id => {
+        const sel = document.getElementById(id);
+        const prev = sel.value;
+        sel.innerHTML = '<option value="">– Person –</option>';
+        persons.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.name; opt.textContent = p.name;
+            sel.appendChild(opt);
+        });
+        if (prev && persons.find(p => p.name === prev)) sel.value = prev;
+    });
+}
+function pairEquals(p1, p2) {
+    const k = x => x.trim().toLowerCase();
+    return (k(p1[0]) === k(p2[0]) && k(p1[1]) === k(p2[1])) || (k(p1[0]) === k(p2[1]) && k(p1[1]) === k(p2[0]));
+}
+document.getElementById('apart-add-btn').addEventListener('click', () => {
+    const a = document.getElementById('apart-a').value;
+    const b = document.getElementById('apart-b').value;
+    if (!a || !b || a.trim().toLowerCase() === b.trim().toLowerCase()) return;
+    if (apartPairs.some(p => pairEquals(p, [a, b]))) return;
+    apartPairs.push([a, b]);
+    saveApartPairs();
+    renderApartList();
+});
+function renderApartList() {
+    const ul = document.getElementById('apart-list');
+    ul.innerHTML = '';
+    if (apartPairs.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'text-xs text-gray-400 italic';
+        li.textContent = 'Keine Regeln definiert.';
+        ul.appendChild(li);
+        return;
+    }
+    apartPairs.forEach((pair, idx) => {
+        const li = document.createElement('li');
+        li.className = 'inline-flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs px-2 py-1 rounded-full mr-1.5 mb-1.5';
+        const span = document.createElement('span');
+        span.textContent = `${pair[0]} ↮ ${pair[1]}`;
+        const rm = document.createElement('button');
+        rm.className = 'text-amber-400 hover:text-red-500';
+        rm.innerHTML = '<i class="fas fa-times" aria-hidden="true"></i>';
+        rm.setAttribute('aria-label', `Regel "${pair[0]} nicht mit ${pair[1]}" entfernen`);
+        rm.addEventListener('click', () => { apartPairs.splice(idx, 1); saveApartPairs(); renderApartList(); });
+        li.appendChild(span); li.appendChild(rm);
+        ul.appendChild(li);
+    });
 }
 
+// TEAM-GENERIERUNG
 document.getElementById('generate-btn').addEventListener('click', generateTeams);
 document.getElementById('regenerate-btn').addEventListener('click', generateTeams);
+document.getElementById('team-mode').addEventListener('change', function() {
+    document.getElementById('num-teams-label').textContent = this.value === 'size' ? 'Personen pro Team' : 'Anzahl der Teams';
+});
 
 function generateTeams() {
-    const n = parseInt(document.getElementById('num-teams').value, 10);
+    const mode = document.getElementById('team-mode').value; // 'teams' | 'size'
+    const inputVal = parseInt(document.getElementById('num-teams').value, 10);
     const balanceGender = document.getElementById('balance-gender').checked;
     const balanceSport = document.getElementById('balance-sport').checked;
     const errEl = document.getElementById('error-msg');
-    errEl.classList.add('hidden');
+    const apartWarnEl = document.getElementById('apart-warning');
+    errEl.classList.add('hidden'); apartWarnEl.classList.add('hidden');
     if (persons.length === 0) { errEl.textContent = 'Bitte füge zuerst Personen hinzu.'; errEl.classList.remove('hidden'); return; }
-    if (isNaN(n) || n < 2)   { errEl.textContent = 'Mindestens 2 Teams erforderlich.';  errEl.classList.remove('hidden'); return; }
-    if (n > persons.length)  { errEl.textContent = 'Mehr Teams als Teilnehmer.';         errEl.classList.remove('hidden'); return; }
-    let teams = Array.from({ length: n }, () => []);
-    const shuf = shuffleArray(persons);
-    if (balanceGender || balanceSport) {
-        // Personen in Gruppen mit gleichen Ausgleichs-Merkmalen aufteilen und diese
-        // mit fortlaufendem Index über die Teams verteilen: so landet jede Gruppe
-        // (z.B. "sportlich + weiblich") möglichst gleichmässig in allen Teams.
-        const sportKeys = balanceSport ? [true, false] : [null];
-        const genderKeys = balanceGender ? ['female', 'male', 'diverse'] : [null];
-        const strata = [];
-        sportKeys.forEach(sp => genderKeys.forEach(g => {
-            strata.push(shuf.filter(p =>
-                (sp === null || (p.sporty === true) === sp) &&
-                (g === null || p.gender === g)));
-        }));
-        let idx = 0;
-        strata.forEach(grp => grp.forEach(p => { teams[idx].push(p); idx = (idx + 1) % n; }));
-        teams = teams.map(t => shuffleArray(t));
+    let n;
+    if (mode === 'size') {
+        if (isNaN(inputVal) || inputVal < 1) { errEl.textContent = 'Mindestens 1 Person pro Team.'; errEl.classList.remove('hidden'); return; }
+        n = Math.ceil(persons.length / inputVal);
+        if (n < 2) { errEl.textContent = 'Diese Gruppengrösse ergibt weniger als 2 Teams.'; errEl.classList.remove('hidden'); return; }
     } else {
-        shuf.forEach((p, i) => teams[i % n].push(p));
+        n = inputVal;
+        if (isNaN(n) || n < 2) { errEl.textContent = 'Mindestens 2 Teams erforderlich.'; errEl.classList.remove('hidden'); return; }
+        if (n > persons.length) { errEl.textContent = 'Mehr Teams als Teilnehmer.'; errEl.classList.remove('hidden'); return; }
+    }
+    let teams = distributeTeams(persons, n, { balanceGender, balanceSport });
+    if (apartPairs.length > 0) {
+        const result = enforceApart(teams, apartPairs, { balanceStrict: balanceGender || balanceSport });
+        teams = result.teams;
+        if (result.unresolved) {
+            apartWarnEl.textContent = 'Hinweis: Nicht alle "Nicht zusammen"-Regeln konnten erfüllt werden.';
+            apartWarnEl.classList.remove('hidden');
+        }
     }
     renderTeams(teams);
 }
@@ -918,13 +1212,13 @@ function renderTeams(teams) {
         stats.className = 'px-4 py-1.5 bg-gray-50 border-b border-gray-100 flex text-xs text-gray-500 gap-3';
         [[fC,'fa-venus','text-pink-400','Weiblich'],[mC,'fa-mars','text-blue-400','Männlich'],[dC,'fa-genderless','text-purple-400','Divers']].forEach(([cnt,icon,color,lbl]) => {
             if (!cnt) return;
-            const s = document.createElement('span'); s.title = `${cnt} ${lbl}`; s.innerHTML = `<i class="fas ${icon} ${color} mr-0.5"></i>${cnt}`; stats.appendChild(s);
+            const s = document.createElement('span'); s.title = `${cnt} ${lbl}`; s.innerHTML = `<i class="fas ${icon} ${color} mr-0.5" aria-hidden="true"></i>${cnt}<span class="sr-only"> ${lbl}</span>`; stats.appendChild(s);
         });
         const ul = document.createElement('ul'); ul.className = 'p-4 flex-grow space-y-1.5';
         team.forEach(p => {
             const li = document.createElement('li'); li.className = 'flex items-center gap-2 py-1 border-b border-gray-50 last:border-0';
             const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[sanitizeGender(p.gender)];
-            const name = document.createElement('span'); name.className = 'text-gray-700 text-sm'; name.textContent = p.name;
+            const name = document.createElement('span'); name.className = 'text-gray-700 text-sm team-member-name'; name.textContent = p.name;
             li.appendChild(icon); li.appendChild(name); ul.appendChild(li);
         });
         card.appendChild(header); card.appendChild(stats); card.appendChild(ul);
@@ -934,38 +1228,80 @@ function renderTeams(teams) {
     document.getElementById('results-section').scrollIntoView({ behavior: 'smooth' });
 }
 
+document.getElementById('print-teams-btn').addEventListener('click', () => window.print());
+
 document.getElementById('copy-teams-btn').addEventListener('click', async () => {
     const cards = document.querySelectorAll('.team-card');
     if (!cards.length) return;
     let text = 'Generierte Teams:\n\n';
-    cards.forEach((card, i) => { text += `--- Team ${i+1} ---\n`; card.querySelectorAll('ul li span:last-child').forEach(s => text += `- ${s.textContent.trim()}\n`); text += '\n'; });
+    cards.forEach((card, i) => { text += `--- Team ${i+1} ---\n`; card.querySelectorAll('.team-member-name').forEach(s => text += `- ${s.textContent.trim()}\n`); text += '\n'; });
     const orig = document.getElementById('copy-teams-btn').innerHTML;
     try {
         await navigator.clipboard.writeText(text);
-        document.getElementById('copy-teams-btn').innerHTML = '<i class="fas fa-check text-green-500 mr-1"></i> Kopiert!';
+        document.getElementById('copy-teams-btn').innerHTML = '<i class="fas fa-check text-green-500 mr-1" aria-hidden="true"></i> Kopiert!';
     } catch {
-        const ta = Object.assign(document.createElement('textarea'), { value: text, style: 'position:fixed;opacity:0' });
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
         document.body.appendChild(ta); ta.select();
-        try { document.execCommand('copy'); document.getElementById('copy-teams-btn').innerHTML = '<i class="fas fa-check text-green-500 mr-1"></i> Kopiert!'; } catch {}
+        try { document.execCommand('copy'); document.getElementById('copy-teams-btn').innerHTML = '<i class="fas fa-check text-green-500 mr-1" aria-hidden="true"></i> Kopiert!'; } catch {}
         document.body.removeChild(ta);
     }
     setTimeout(() => { document.getElementById('copy-teams-btn').innerHTML = orig; }, 2000);
 });
 
-// KOMPLETT-BACKUP (Klassen + Wochenpläne + Anwesenheitsdaten)
-document.getElementById('backup-export-btn').addEventListener('click', () => {
+// KOMPLETT-BACKUP (Klassen + Wochenpläne + Anwesenheitsdaten + Teilnehmerliste)
+// Optional mit Passwort verschlüsselt (AES-GCM, Schlüssel via PBKDF2-SHA-256).
+const PBKDF2_ITERATIONS = 210000;
+const b64encode = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const b64decode = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+
+async function deriveBackupKey(password, salt, iterations) {
+    const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+        material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+    );
+}
+async function encryptBackup(obj, password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveBackupKey(password, salt, PBKDF2_ITERATIONS);
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+    return {
+        app: 'teamgenerator-backup', encrypted: true,
+        kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: PBKDF2_ITERATIONS },
+        salt: b64encode(salt), iv: b64encode(iv), data: b64encode(ciphertext)
+    };
+}
+async function decryptBackup(payload, password) {
+    const iterations = payload.kdf && Number.isInteger(payload.kdf.iterations) ? payload.kdf.iterations : PBKDF2_ITERATIONS;
+    const key = await deriveBackupKey(password, b64decode(payload.salt), iterations);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64decode(payload.iv) }, key, b64decode(payload.data));
+    return JSON.parse(new TextDecoder().decode(plain));
+}
+
+document.getElementById('backup-export-btn').addEventListener('click', async () => {
     const backup = {
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
         classes, classIdCounter, stuIdCounter,
-        attendanceData
+        attendanceData,
+        persons, personIdCounter
     };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `teamgenerator-backup-${todayStr()}.json`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    let payload = backup;
+    if (window.crypto && crypto.subtle) {
+        const pw = await uiPrompt('Optional: Passwort zum Verschlüsseln des Backups. Leer lassen für unverschlüsselt.', {
+            title: 'Backup herunterladen', inputType: 'password', placeholder: 'Passwort (optional)',
+            hint: 'Empfohlen, da das Backup sensible Daten (Namen, Abwesenheitsgründe) enthält.', okLabel: 'Herunterladen'
+        });
+        if (pw === null) return;
+        if (pw) {
+            try { payload = await encryptBackup(backup, pw); }
+            catch (e) { await uiAlert('Verschlüsselung fehlgeschlagen — Backup wurde nicht erstellt.'); return; }
+        }
+    }
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), `teamgenerator-backup-${todayStr()}.json`);
 });
 
 const $backupFileInput = document.getElementById('backup-file-input');
@@ -974,85 +1310,47 @@ $backupFileInput.addEventListener('change', () => {
     const file = $backupFileInput.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
         try {
-            const data = JSON.parse(reader.result);
+            let data = JSON.parse(reader.result);
+            if (data && data.encrypted === true) {
+                if (!(window.crypto && crypto.subtle)) { await uiAlert('Dieses Backup ist verschlüsselt, aber der Browser unterstützt hier keine Entschlüsselung (unsichere Umgebung?).'); return; }
+                const pw = await uiPrompt('Dieses Backup ist verschlüsselt. Passwort eingeben:', { title: 'Backup wiederherstellen', inputType: 'password', okLabel: 'Entschlüsseln' });
+                if (pw === null) return;
+                try { data = await decryptBackup(data, pw); }
+                catch (e) { await uiAlert('Entschlüsselung fehlgeschlagen — falsches Passwort oder beschädigte Datei.'); return; }
+            }
             const result = validateBackup(data);
-            if (!result) { alert('Ungültige Backup-Datei: Es wurde kein Komplett-Backup dieser App erkannt.'); return; }
-            if (!confirm(`Backup vom ${result.exportedAt ? formatDateDisplay(result.exportedAt.slice(0,10)) : 'unbekannten Datum'} mit ${result.classes.length} Klasse(n) wiederherstellen? Alle aktuellen Klassen und Anwesenheitsdaten werden ersetzt.`)) return;
+            if (!result) { await uiAlert('Ungültige Backup-Datei: Es wurde kein Komplett-Backup dieser App erkannt.'); return; }
+            const ok = await uiConfirm(`Backup vom ${result.exportedAt ? formatDateDisplay(result.exportedAt.slice(0,10)) : 'unbekannten Datum'} mit ${result.classes.length} Klasse(n) wiederherstellen? Alle aktuellen Klassen und Anwesenheitsdaten werden ersetzt.`, { title: 'Backup wiederherstellen', okLabel: 'Wiederherstellen', danger: true });
+            if (!ok) return;
             classes = result.classes;
             classIdCounter = result.classIdCounter;
             stuIdCounter = result.stuIdCounter;
             attendanceData = result.attendanceData;
+            persons = result.persons;
+            personIdCounter = result.personIdCounter;
+            personsManual = false;
             activeClassId = null; selAttendClassId = null; currentSessionRecords = {};
-            saveClasses(); saveAttendanceData();
-            renderClassList(); renderClassDetail();
-            document.getElementById('attendance-class-select').value = '';
+            attendanceDirty = false; updateDirtyHint();
+            saveClasses(); saveAttendanceData(); savePersons();
+            renderClassList(); renderClassDetail(); renderPersonList();
+            $attendanceSelect.value = '';
             document.getElementById('attendance-empty').classList.remove('hidden');
             document.getElementById('attendance-content').classList.add('hidden');
             switchTab('classes');
-            alert(`Backup wiederhergestellt: ${result.classes.length} Klasse(n).`);
+            await uiAlert(`Backup wiederhergestellt: ${result.classes.length} Klasse(n).`);
         } catch (err) {
-            alert('Backup konnte nicht gelesen werden (kein gültiges JSON).');
+            await uiAlert('Backup konnte nicht gelesen werden (kein gültiges JSON).');
         }
         $backupFileInput.value = '';
     };
     reader.readAsText(file);
 });
 
-// Prüft und normalisiert eine Backup-Datei; gibt null zurück, wenn die Struktur nicht passt.
-function validateBackup(data) {
-    if (!data || typeof data !== 'object' || !Array.isArray(data.classes)) return null;
-    const cleanClasses = [];
-    let maxClassId = 0, maxStuId = 0;
-    for (const cls of data.classes) {
-        if (!cls || typeof cls !== 'object') return null;
-        const id = Number.isInteger(cls.id) && cls.id > 0 ? cls.id : null;
-        const name = typeof cls.name === 'string' ? cls.name.trim() : '';
-        if (id === null || !name) return null;
-        const students = [];
-        for (const s of (Array.isArray(cls.students) ? cls.students : [])) {
-            if (!s || typeof s !== 'object' || !Number.isInteger(s.id) || typeof s.name !== 'string' || !s.name.trim()) continue;
-            students.push({ id: s.id, name: s.name.trim(), gender: sanitizeGender(s.gender), sporty: s.sporty === true });
-            if (s.id > maxStuId) maxStuId = s.id;
-        }
-        const schedule = (Array.isArray(cls.schedule) ? cls.schedule : [])
-            .filter(e => e && Number.isInteger(e.weekday) && e.weekday >= 0 && e.weekday <= 6 && typeof e.time === 'string' && TIME_RE.test(e.time))
-            .map(e => ({ weekday: e.weekday, time: e.time }));
-        cleanClasses.push({ id, name, students, schedule });
-        if (id > maxClassId) maxClassId = id;
-    }
-    const cleanAttendance = {};
-    if (data.attendanceData && typeof data.attendanceData === 'object' && !Array.isArray(data.attendanceData)) {
-        for (const [classIdKey, sessions] of Object.entries(data.attendanceData)) {
-            if (!cleanClasses.find(c => String(c.id) === classIdKey)) continue;
-            if (!sessions || typeof sessions !== 'object' || Array.isArray(sessions)) continue;
-            const cleanSessions = {};
-            for (const [dateKey, session] of Object.entries(sessions)) {
-                if (!DATE_RE.test(dateKey) || !session || typeof session !== 'object') continue;
-                const records = {};
-                if (session.records && typeof session.records === 'object' && !Array.isArray(session.records)) {
-                    for (const [stuKey, rec] of Object.entries(session.records)) {
-                        if (!rec || typeof rec !== 'object') continue;
-                        records[stuKey] = {
-                            status: rec.status === 'absent' ? 'absent' : 'present',
-                            reasonCategory: REASON_CATEGORIES.includes(rec.reasonCategory) ? rec.reasonCategory : '',
-                            note: typeof rec.note === 'string' ? rec.note : ''
-                        };
-                    }
-                }
-                cleanSessions[dateKey] = { date: dateKey, weekday: getWeekdayIndex(dateKey), records };
-            }
-            if (Object.keys(cleanSessions).length) cleanAttendance[classIdKey] = cleanSessions;
-        }
-    }
-    return {
-        classes: cleanClasses,
-        classIdCounter: Math.max(Number.isInteger(data.classIdCounter) ? data.classIdCounter : 1, maxClassId + 1),
-        stuIdCounter: Math.max(Number.isInteger(data.stuIdCounter) ? data.stuIdCounter : 1, maxStuId + 1),
-        attendanceData: cleanAttendance,
-        exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : null
-    };
+// SERVICE WORKER (offline-fähig; nur unter https/localhost möglich)
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+    window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => {}); });
 }
 
 // INIT

@@ -1,0 +1,15 @@
+{
+    "name": "Team Generator",
+    "short_name": "Teams",
+    "description": "Klassen verwalten, Anwesenheit erfassen und zufällige Teams generieren — alles lokal im Browser.",
+    "lang": "de",
+    "start_url": ".",
+    "scope": ".",
+    "display": "standalone",
+    "background_color": "#eef2ff",
+    "theme_color": "#4f46e5",
+    "icons": [
+        { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+        { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+    ]
+}

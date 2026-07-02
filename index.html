@@ -5,11 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Team Generator</title>
     <meta name="description" content="Klassen verwalten, Anwesenheit erfassen und zufällige Teams generieren.">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.tailwindcss.com; style-src 'self' https://cdnjs.cloudflare.com https://fonts.googleapis.com 'unsafe-inline'; font-src https://cdnjs.cloudflare.com https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
     <meta name="referrer" content="no-referrer">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <meta name="theme-color" content="#4f46e5">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <link rel="stylesheet" href="vendor/tailwind.css">
+    <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="text-gray-800 min-h-screen py-6 px-4 md:px-8">
@@ -17,10 +20,10 @@
 <div class="max-w-5xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden ring-1 ring-black/5">
 
     <!-- Header -->
-    <div class="app-header text-white px-6 py-8 text-center relative overflow-hidden">
+    <div class="app-header text-white px-6 py-8 text-center relative overflow-hidden no-print">
         <div class="relative z-10">
             <h1 class="text-3xl md:text-4xl font-extrabold mb-1.5 tracking-tight">
-                <i class="fas fa-people-group mr-2 opacity-80"></i>Team Generator
+                <i class="fas fa-people-group mr-2 opacity-80" aria-hidden="true"></i>Team Generator
             </h1>
             <p class="text-indigo-100/90 text-sm">Klassen verwalten · Anwesenheit erfassen · Teams bilden</p>
         </div>
@@ -29,52 +32,56 @@
     </div>
 
     <!-- Tab Navigation -->
-    <div class="bg-indigo-50/70 border-b border-indigo-100 flex">
-        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2 active" data-tab="classes">
-            <i class="fas fa-chalkboard-teacher"></i><span class="hidden sm:inline">Klassen</span>
+    <div class="bg-indigo-50/70 border-b border-indigo-100 flex no-print" role="tablist" aria-label="Bereiche">
+        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2 active" data-tab="classes"
+                id="tab-btn-classes" role="tab" aria-selected="true" aria-controls="tab-classes">
+            <i class="fas fa-chalkboard-teacher" aria-hidden="true"></i><span class="hidden sm:inline">Klassen</span><span class="sr-only sm:hidden">Klassen</span>
         </button>
-        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="attendance">
-            <i class="fas fa-clipboard-check"></i><span class="hidden sm:inline">Anwesenheit</span>
+        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="attendance"
+                id="tab-btn-attendance" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-attendance">
+            <i class="fas fa-clipboard-check" aria-hidden="true"></i><span class="hidden sm:inline">Anwesenheit</span><span class="sr-only sm:hidden">Anwesenheit</span>
         </button>
-        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="stats">
-            <i class="fas fa-chart-bar"></i><span class="hidden sm:inline">Auswertung</span>
+        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="stats"
+                id="tab-btn-stats" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-stats">
+            <i class="fas fa-chart-bar" aria-hidden="true"></i><span class="hidden sm:inline">Auswertung</span><span class="sr-only sm:hidden">Auswertung</span>
         </button>
-        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="teams">
-            <i class="fas fa-users"></i><span class="hidden sm:inline">Teams</span>
+        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="teams"
+                id="tab-btn-teams" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-teams">
+            <i class="fas fa-users" aria-hidden="true"></i><span class="hidden sm:inline">Teams</span><span class="sr-only sm:hidden">Teams</span>
         </button>
     </div>
 
     <!-- TAB 1: KLASSEN -->
-    <div id="tab-classes" class="p-5 md:p-8">
+    <div id="tab-classes" class="p-5 md:p-8" role="tabpanel" aria-labelledby="tab-btn-classes">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <!-- Links: Klassenliste -->
             <div>
                 <div class="flex items-center justify-between mb-4 border-b pb-2">
                     <h2 class="text-lg font-semibold">Meine Klassen</h2>
                     <div class="flex items-center gap-2">
-                        <button id="import-format-help-btn" class="text-xs text-gray-400 hover:text-indigo-600 p-1.5 rounded-md transition-colors" title="Format-Beispiele für den Klassen-Import anzeigen">
-                            <i class="fas fa-circle-question"></i>
+                        <button id="import-format-help-btn" class="text-xs text-gray-400 hover:text-indigo-600 p-1.5 rounded-md transition-colors" title="Format-Beispiele für den Klassen-Import anzeigen" aria-label="Format-Beispiele für den Klassen-Import anzeigen">
+                            <i class="fas fa-circle-question" aria-hidden="true"></i>
                         </button>
-                        <button id="import-classes-btn" class="text-xs text-gray-400 hover:text-indigo-600 px-2 py-1.5 rounded-md flex items-center gap-1 transition-colors" title="Klassen aus JSON-Datei importieren">
-                            <i class="fas fa-file-upload"></i> <span class="hidden lg:inline">Import</span>
+                        <button id="import-classes-btn" class="text-xs text-gray-400 hover:text-indigo-600 px-2 py-1.5 rounded-md flex items-center gap-1 transition-colors" title="Klassen aus JSON-Datei importieren" aria-label="Klassen aus Datei importieren">
+                            <i class="fas fa-file-upload" aria-hidden="true"></i> <span class="hidden lg:inline">Import</span>
                         </button>
-                        <button id="export-classes-btn" class="text-xs text-gray-400 hover:text-indigo-600 px-2 py-1.5 rounded-md flex items-center gap-1 transition-colors" title="Klassen als JSON-Datei exportieren">
-                            <i class="fas fa-file-download"></i> <span class="hidden lg:inline">Export</span>
+                        <button id="export-classes-btn" class="text-xs text-gray-400 hover:text-indigo-600 px-2 py-1.5 rounded-md flex items-center gap-1 transition-colors" title="Klassen als JSON-Datei exportieren" aria-label="Klassen als Datei exportieren">
+                            <i class="fas fa-file-download" aria-hidden="true"></i> <span class="hidden lg:inline">Export</span>
                         </button>
                         <input type="file" id="import-file-input" accept=".json,.csv,.txt" class="hidden">
                         <button id="create-class-btn" class="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors">
-                            <i class="fas fa-plus text-xs"></i> Neue Klasse
+                            <i class="fas fa-plus text-xs" aria-hidden="true"></i> Neue Klasse
                         </button>
                     </div>
                 </div>
                 <div id="import-format-help" class="hidden mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200 text-xs text-gray-600 space-y-2">
-                    <p class="font-medium text-gray-700"><i class="fas fa-file-csv mr-1"></i>CSV/TXT — eine Zeile pro Schüler(in):</p>
+                    <p class="font-medium text-gray-700"><i class="fas fa-file-csv mr-1" aria-hidden="true"></i>CSV/TXT — eine Zeile pro Schüler(in), Kopfzeile optional:</p>
                     <pre class="bg-white border rounded p-2 overflow-x-auto">Klasse;Name;Geschlecht;Sportlich
 7a;Anna;w;s
 7a;Max;m;
 7a;Kim;d;s</pre>
                     <p class="text-gray-400">Geschlecht: <code class="bg-gray-200 px-1 rounded">w</code>/<code class="bg-gray-200 px-1 rounded">m</code>/<code class="bg-gray-200 px-1 rounded">d</code>. Sportlich (letzte Spalte, optional): <code class="bg-gray-200 px-1 rounded">s</code>, <code class="bg-gray-200 px-1 rounded">ja</code>, <code class="bg-gray-200 px-1 rounded">x</code> oder <code class="bg-gray-200 px-1 rounded">1</code> — leer lassen für "nicht sportlich".</p>
-                    <p class="font-medium text-gray-700 pt-1"><i class="fas fa-file-code mr-1"></i>JSON — z.B. aus dem "Export" erzeugt:</p>
+                    <p class="font-medium text-gray-700 pt-1"><i class="fas fa-file-code mr-1" aria-hidden="true"></i>JSON — z.B. aus dem "Export" erzeugt:</p>
                     <pre class="bg-white border rounded p-2 overflow-x-auto">[
   {
     "name": "7a",
@@ -86,25 +93,25 @@
 ]</pre>
                 </div>
                 <div id="new-class-form" class="hidden mb-4 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Klassenname</label>
+                    <label for="new-class-name" class="block text-sm font-medium text-gray-700 mb-1">Klassenname</label>
                     <div class="flex gap-2">
                         <input type="text" id="new-class-name" placeholder="z.B. 7a"
                             class="flex-1 border rounded-md p-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                         <button id="save-class-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md text-sm transition-colors">Speichern</button>
-                        <button id="cancel-class-btn" class="text-gray-400 hover:text-gray-600 px-2 text-lg leading-none">&times;</button>
+                        <button id="cancel-class-btn" class="text-gray-400 hover:text-gray-600 px-2 text-lg leading-none" aria-label="Abbrechen">&times;</button>
                     </div>
                     <div class="mt-2">
-                        <label class="block text-xs font-medium text-gray-500 mb-1">Wochentag(e) &amp; Uhrzeit (optional)</label>
+                        <span class="block text-xs font-medium text-gray-500 mb-1">Wochentag(e) &amp; Uhrzeit (optional)</span>
                         <div id="new-class-schedule-rows" class="space-y-1.5"></div>
                         <button id="new-class-schedule-add-btn" type="button" class="mt-1.5 text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
-                            <i class="fas fa-plus"></i> Termin hinzufügen
+                            <i class="fas fa-plus" aria-hidden="true"></i> Termin hinzufügen
                         </button>
                     </div>
                     <p id="new-class-error" class="text-red-500 text-xs hidden mt-1"></p>
                 </div>
                 <ul id="class-list" class="space-y-2">
                     <li id="no-classes-msg" class="text-center text-gray-400 text-sm py-10">
-                        <i class="fas fa-graduation-cap text-3xl mb-2 opacity-30 block"></i>
+                        <i class="fas fa-graduation-cap text-3xl mb-2 opacity-30 block" aria-hidden="true"></i>
                         Noch keine Klassen angelegt.
                     </li>
                 </ul>
@@ -114,7 +121,7 @@
             <div>
                 <div id="no-class-selected" class="h-full flex items-center justify-center text-gray-300 py-10">
                     <div class="text-center text-sm">
-                        <i class="fas fa-hand-point-left text-3xl mb-2 block opacity-40"></i>
+                        <i class="fas fa-hand-point-left text-3xl mb-2 block opacity-40" aria-hidden="true"></i>
                         Klasse auswählen
                     </div>
                 </div>
@@ -125,15 +132,15 @@
                     </div>
                     <div class="mb-3 p-2.5 bg-indigo-50 rounded-lg border border-indigo-100">
                         <div class="flex items-center justify-between mb-1">
-                            <span class="text-xs font-medium text-indigo-700"><i class="fas fa-calendar-alt mr-1"></i>Wochenplan</span>
-                            <button id="edit-schedule-btn" class="text-xs text-indigo-500 hover:text-indigo-700"><i class="fas fa-pen"></i> Bearbeiten</button>
+                            <span class="text-xs font-medium text-indigo-700"><i class="fas fa-calendar-alt mr-1" aria-hidden="true"></i>Wochenplan</span>
+                            <button id="edit-schedule-btn" class="text-xs text-indigo-500 hover:text-indigo-700"><i class="fas fa-pen" aria-hidden="true"></i> Bearbeiten</button>
                         </div>
                         <div id="detail-schedule-display" class="flex flex-wrap gap-1.5"></div>
                         <div id="detail-schedule-edit" class="hidden mt-1">
                             <div id="detail-schedule-rows" class="space-y-1.5"></div>
                             <div class="flex items-center gap-2 mt-1.5">
                                 <button id="detail-schedule-add-btn" type="button" class="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
-                                    <i class="fas fa-plus"></i> Termin hinzufügen
+                                    <i class="fas fa-plus" aria-hidden="true"></i> Termin hinzufügen
                                 </button>
                                 <button id="detail-schedule-save-btn" type="button" class="ml-auto text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-md">Speichern</button>
                             </div>
@@ -141,10 +148,10 @@
                     </div>
                     <form id="add-student-form" class="mb-3 space-y-2">
                         <div class="flex gap-2">
-                            <input type="text" id="student-name-input" placeholder="Name"
+                            <input type="text" id="student-name-input" placeholder="Name" aria-label="Name der Schülerin / des Schülers"
                                 class="flex-1 border rounded-md p-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 rounded-md transition-colors">
-                                <i class="fas fa-plus text-sm"></i>
+                            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 rounded-md transition-colors" aria-label="Schüler(in) hinzufügen">
+                                <i class="fas fa-plus text-sm" aria-hidden="true"></i>
                             </button>
                         </div>
                         <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm items-center">
@@ -153,34 +160,34 @@
                             <label class="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="student-gender" value="diverse" class="text-indigo-600"><span>Divers</span></label>
                             <label class="inline-flex items-center gap-1.5 cursor-pointer text-emerald-700" title="Für faire Teams im Sportunterricht">
                                 <input type="checkbox" id="student-sporty-input" class="rounded text-emerald-600 h-4 w-4">
-                                <span><i class="fas fa-person-running mr-0.5"></i>Sportlich</span>
+                                <span><i class="fas fa-person-running mr-0.5" aria-hidden="true"></i>Sportlich</span>
                             </label>
                         </div>
                         <p id="student-error-msg" class="text-red-500 text-xs hidden"></p>
                     </form>
                     <div class="mb-3">
                         <button id="toggle-class-bulk-btn" class="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
-                            <i class="fas fa-list"></i> Mehrere auf einmal hinzufügen
+                            <i class="fas fa-list" aria-hidden="true"></i> Mehrere auf einmal hinzufügen
                         </button>
                         <div id="class-bulk-area" class="hidden mt-2 p-3 bg-gray-50 rounded-lg border text-sm">
                             <p class="text-xs text-gray-500 mb-1">Format: <code class="bg-gray-200 px-1 rounded">Anna w, Max ms, Kim d</code> &nbsp;(<code class="bg-gray-200 px-1 rounded">s</code> = sportlich)</p>
-                            <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1"></i>Ohne Angabe = weiblich, nicht sportlich</p>
-                            <textarea id="class-bulk-input" rows="3" placeholder="Anna w&#10;Max m&#10;Kim d"
+                            <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1" aria-hidden="true"></i>Ohne Angabe = weiblich, nicht sportlich. Kürzel klein schreiben — Grossbuchstaben zählen zum Namen (z.B. "Anna M").</p>
+                            <textarea id="class-bulk-input" rows="3" placeholder="Anna w&#10;Max m&#10;Kim d" aria-label="Mehrere Schüler(innen), eine pro Zeile"
                                 class="w-full border rounded p-2 text-xs font-mono focus:border-indigo-500 focus:outline-none"></textarea>
                             <p id="class-bulk-msg" class="text-xs text-indigo-700 hidden mt-1"></p>
                             <button id="class-bulk-import-btn"
                                 class="mt-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-3 py-1.5 rounded text-xs font-medium flex items-center gap-1.5 transition-colors">
-                                <i class="fas fa-file-import"></i> Importieren
+                                <i class="fas fa-file-import" aria-hidden="true"></i> Importieren
                             </button>
                         </div>
                     </div>
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-xs text-gray-400">Schülerliste</span>
                         <button id="sort-alpha-btn" class="text-xs text-gray-400 hover:text-indigo-600 transition-colors flex items-center gap-1">
-                            <i class="fas fa-sort-alpha-down"></i> A-Z sortieren
+                            <i class="fas fa-sort-alpha-down" aria-hidden="true"></i> A-Z sortieren
                         </button>
                     </div>
-                    <div class="overflow-y-auto border rounded-lg bg-gray-50" style="max-height: 280px;">
+                    <div class="overflow-y-auto border rounded-lg bg-gray-50 max-h-[280px]">
                         <ul id="student-list" class="p-2 space-y-1.5"></ul>
                     </div>
                 </div>
@@ -189,27 +196,27 @@
     </div>
 
     <!-- TAB 2: ANWESENHEIT -->
-    <div id="tab-attendance" class="hidden p-5 md:p-8">
+    <div id="tab-attendance" class="hidden p-5 md:p-8" role="tabpanel" aria-labelledby="tab-btn-attendance">
         <div class="mb-6 flex flex-col sm:flex-row gap-4">
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Klasse auswählen</label>
+                <label for="attendance-class-select" class="block text-sm font-medium text-gray-700 mb-1">Klasse auswählen</label>
                 <select id="attendance-class-select"
                     class="w-full sm:w-64 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
                     <option value="">-- Klasse wählen --</option>
                 </select>
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Datum</label>
+                <label for="attendance-date-input" class="block text-sm font-medium text-gray-700 mb-1">Datum</label>
                 <input type="date" id="attendance-date-input"
                     class="w-full sm:w-48 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
             </div>
         </div>
         <div id="attendance-empty" class="text-center text-gray-300 py-16">
-            <i class="fas fa-clipboard-list text-5xl mb-3 block opacity-40"></i>
+            <i class="fas fa-clipboard-list text-5xl mb-3 block opacity-40" aria-hidden="true"></i>
             <p class="text-sm">Wähle zuerst eine Klasse aus.</p>
         </div>
         <div id="attendance-content" class="hidden">
-            <p id="attendance-schedule-hint" class="hidden text-xs text-amber-600 mb-3"><i class="fas fa-info-circle mr-1"></i><span></span></p>
+            <p id="attendance-schedule-hint" class="hidden text-xs text-amber-600 mb-3"><i class="fas fa-info-circle mr-1" aria-hidden="true"></i><span></span></p>
             <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div class="text-indigo-800">
                     <span class="text-2xl font-bold" id="present-count">0</span>
@@ -219,10 +226,10 @@
                 </div>
                 <div class="flex gap-2">
                     <button id="all-present-btn" class="text-xs bg-green-100 hover:bg-green-200 text-green-800 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5">
-                        <i class="fas fa-check-double"></i> Alle anwesend
+                        <i class="fas fa-check-double" aria-hidden="true"></i> Alle anwesend
                     </button>
                     <button id="all-absent-btn" class="text-xs bg-red-100 hover:bg-red-200 text-red-800 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5">
-                        <i class="fas fa-times"></i> Alle abwesend
+                        <i class="fas fa-times" aria-hidden="true"></i> Alle abwesend
                     </button>
                 </div>
             </div>
@@ -230,36 +237,37 @@
             <div class="border-t pt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
                 <button id="save-attendance-btn"
                     class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl shadow-md transition-colors inline-flex items-center gap-2 text-sm">
-                    <i class="fas fa-save"></i> Anwesenheit speichern
+                    <i class="fas fa-save" aria-hidden="true"></i> Anwesenheit speichern
                 </button>
                 <button id="load-to-teams-btn"
                     class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-md transition-colors inline-flex items-center gap-2 text-sm">
-                    <i class="fas fa-users"></i>
+                    <i class="fas fa-users" aria-hidden="true"></i>
                     <span id="load-to-teams-label">Teams erstellen</span>
                 </button>
             </div>
-            <p id="attendance-saved-msg" class="hidden text-xs text-emerald-600 text-center mt-2"><i class="fas fa-check-circle mr-1"></i>Anwesenheit für dieses Datum gespeichert.</p>
+            <p id="attendance-dirty-hint" class="hidden text-xs text-amber-600 text-center mt-2" role="status"><i class="fas fa-exclamation-circle mr-1" aria-hidden="true"></i>Ungespeicherte Änderungen — "Anwesenheit speichern" nicht vergessen.</p>
+            <p id="attendance-saved-msg" class="hidden text-xs text-emerald-600 text-center mt-2" role="status"><i class="fas fa-check-circle mr-1" aria-hidden="true"></i>Anwesenheit für dieses Datum gespeichert.</p>
 
             <div class="border-t mt-8 pt-5">
-                <h3 class="text-sm font-semibold text-gray-600 mb-2"><i class="fas fa-history mr-1"></i>Erfasste Termine</h3>
+                <h3 class="text-sm font-semibold text-gray-600 mb-2"><i class="fas fa-history mr-1" aria-hidden="true"></i>Erfasste Termine</h3>
                 <ul id="attendance-sessions-list" class="space-y-1.5 text-sm"></ul>
             </div>
         </div>
     </div>
 
     <!-- TAB: AUSWERTUNG -->
-    <div id="tab-stats" class="hidden p-5 md:p-8">
+    <div id="tab-stats" class="hidden p-5 md:p-8" role="tabpanel" aria-labelledby="tab-btn-stats">
         <div class="mb-6 flex flex-col sm:flex-row sm:items-end gap-4 justify-between">
             <div class="flex flex-col sm:flex-row gap-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Klasse auswählen</label>
+                    <label for="stats-class-select" class="block text-sm font-medium text-gray-700 mb-1">Klasse auswählen</label>
                     <select id="stats-class-select"
                         class="w-full sm:w-64 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
                         <option value="">-- Klasse wählen --</option>
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Semester</label>
+                    <label for="stats-semester-select" class="block text-sm font-medium text-gray-700 mb-1">Semester</label>
                     <select id="stats-semester-select"
                         class="w-full sm:w-56 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
                         <option value="all">Ganzes Schuljahr</option>
@@ -269,38 +277,49 @@
                 </div>
             </div>
             <button id="export-stats-btn" class="hidden text-sm bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-2 rounded-md flex items-center gap-2 transition-colors">
-                <i class="fas fa-file-csv"></i> Als CSV exportieren
+                <i class="fas fa-file-csv" aria-hidden="true"></i> Als CSV exportieren
             </button>
         </div>
         <div id="stats-empty" class="text-center text-gray-300 py-16">
-            <i class="fas fa-chart-bar text-5xl mb-3 block opacity-40"></i>
+            <i class="fas fa-chart-bar text-5xl mb-3 block opacity-40" aria-hidden="true"></i>
             <p class="text-sm">Wähle eine Klasse mit erfassten Terminen aus.</p>
         </div>
         <div id="stats-content" class="hidden">
-            <p class="text-sm text-gray-500 mb-4"><span id="stats-session-count" class="font-semibold text-gray-700">0</span> Termin(e) erfasst.</p>
+            <p class="text-sm text-gray-500 mb-4"><span id="stats-session-count" class="font-semibold text-gray-700">0</span> Termin(e) erfasst. <span class="text-xs text-gray-400">Spaltentitel klicken zum Sortieren.</span></p>
             <div class="overflow-x-auto border rounded-lg">
-                <table class="w-full text-sm">
+                <table id="stats-table" class="w-full text-sm">
                     <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
                         <tr>
-                            <th class="text-left px-3 py-2">Name</th>
-                            <th class="text-center px-3 py-2">Anwesend</th>
-                            <th class="text-center px-3 py-2">Abwesend</th>
-                            <th class="text-center px-3 py-2">Quote</th>
-                            <th class="text-left px-3 py-2">Gründe</th>
+                            <th class="text-left px-3 py-2 cursor-pointer select-none hover:text-indigo-600" data-sort-key="name" aria-sort="ascending" scope="col">Name <span class="sort-arrow" aria-hidden="true"></span></th>
+                            <th class="text-center px-3 py-2 cursor-pointer select-none hover:text-indigo-600" data-sort-key="present" aria-sort="none" scope="col">Anwesend <span class="sort-arrow" aria-hidden="true"></span></th>
+                            <th class="text-center px-3 py-2 cursor-pointer select-none hover:text-indigo-600" data-sort-key="absent" aria-sort="none" scope="col">Abwesend <span class="sort-arrow" aria-hidden="true"></span></th>
+                            <th class="text-center px-3 py-2 cursor-pointer select-none hover:text-indigo-600" data-sort-key="recorded" aria-sort="none" scope="col" title="An wie vielen Terminen erfasst">Erfasst <span class="sort-arrow" aria-hidden="true"></span></th>
+                            <th class="text-center px-3 py-2 cursor-pointer select-none hover:text-indigo-600" data-sort-key="quote" aria-sort="none" scope="col">Quote <span class="sort-arrow" aria-hidden="true"></span></th>
+                            <th class="text-left px-3 py-2" scope="col">Gründe</th>
                         </tr>
                     </thead>
                     <tbody id="stats-table-body"></tbody>
+                    <tfoot class="bg-indigo-50/60 text-xs font-semibold text-indigo-900 border-t border-indigo-100">
+                        <tr>
+                            <td class="px-3 py-2">Klasse gesamt / Ø</td>
+                            <td class="text-center px-3 py-2" id="stats-total-present">0</td>
+                            <td class="text-center px-3 py-2" id="stats-total-absent">0</td>
+                            <td class="text-center px-3 py-2">–</td>
+                            <td class="text-center px-3 py-2" id="stats-avg-quote">–</td>
+                            <td class="px-3 py-2"></td>
+                        </tr>
+                    </tfoot>
                 </table>
             </div>
         </div>
     </div>
 
     <!-- TAB 3: TEAMS -->
-    <div id="tab-teams" class="hidden">
-        <div class="p-5 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+    <div id="tab-teams" class="hidden" role="tabpanel" aria-labelledby="tab-btn-teams">
+        <div class="p-5 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-8 no-print">
             <div class="space-y-5">
                 <div id="source-banner" class="hidden bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-sm text-indigo-800 flex items-start gap-2">
-                    <i class="fas fa-info-circle mt-0.5 flex-shrink-0 text-indigo-400"></i>
+                    <i class="fas fa-info-circle mt-0.5 flex-shrink-0 text-indigo-400" aria-hidden="true"></i>
                     <span id="source-banner-text"></span>
                 </div>
                 <div>
@@ -318,18 +337,25 @@
                             <label class="inline-flex items-center gap-1.5 cursor-pointer text-emerald-700"><input type="checkbox" id="person-sporty-input" class="rounded text-emerald-600 h-4 w-4"> Sportlich</label>
                         </div>
                         <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-md transition-colors flex justify-center items-center gap-2 text-sm">
-                            <i class="fas fa-plus"></i> Hinzufügen
+                            <i class="fas fa-plus" aria-hidden="true"></i> Hinzufügen
                         </button>
                     </form>
-                    <p id="add-error-msg" class="text-red-500 text-xs hidden mt-2 text-center"></p>
+                    <p id="add-error-msg" class="text-red-500 text-xs hidden mt-2 text-center" role="alert"></p>
                 </div>
                 <div>
                     <h2 class="text-lg font-semibold mb-3 border-b pb-2">Einstellungen</h2>
                     <div class="space-y-3">
                         <div>
-                            <label for="num-teams" class="block text-sm font-medium text-gray-700 mb-1">Anzahl der Teams</label>
-                            <input type="number" id="num-teams" min="2" value="2"
-                                class="w-full rounded-md border p-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                            <label for="num-teams" class="block text-sm font-medium text-gray-700 mb-1" id="num-teams-label">Anzahl der Teams</label>
+                            <div class="flex gap-2">
+                                <select id="team-mode" aria-label="Aufteilungsmodus"
+                                    class="border rounded-md p-2 text-sm bg-white focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                    <option value="teams">Anzahl Teams</option>
+                                    <option value="size">Personen pro Team</option>
+                                </select>
+                                <input type="number" id="num-teams" min="1" value="2"
+                                    class="flex-1 rounded-md border p-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                            </div>
                         </div>
                         <div class="flex items-center gap-2">
                             <input type="checkbox" id="balance-gender" class="rounded text-indigo-600 h-4 w-4" checked>
@@ -339,10 +365,22 @@
                             <input type="checkbox" id="balance-sport" class="rounded text-emerald-600 h-4 w-4">
                             <label for="balance-sport" class="text-sm text-gray-700">Sportlichkeit fair verteilen <span class="text-xs text-gray-400">(z.B. Sportunterricht — im Ergebnis nicht sichtbar)</span></label>
                         </div>
+                        <div class="pt-1">
+                            <p class="text-sm font-medium text-gray-700 mb-1"><i class="fas fa-user-slash mr-1 text-amber-500" aria-hidden="true"></i>Nicht zusammen <span class="text-xs text-gray-400 font-normal">(landen nicht im gleichen Team)</span></p>
+                            <div class="flex gap-2 items-center">
+                                <select id="apart-a" aria-label="Erste Person" class="flex-1 min-w-0 border rounded-md p-1.5 text-xs bg-white focus:border-indigo-500 focus:outline-none"></select>
+                                <select id="apart-b" aria-label="Zweite Person" class="flex-1 min-w-0 border rounded-md p-1.5 text-xs bg-white focus:border-indigo-500 focus:outline-none"></select>
+                                <button id="apart-add-btn" type="button" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-800 px-2.5 py-1.5 rounded-md font-medium" aria-label="Regel hinzufügen">
+                                    <i class="fas fa-plus" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <ul id="apart-list" class="mt-2"></ul>
+                        </div>
                         <button id="generate-btn" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition-colors text-base shadow-md flex justify-center items-center gap-2">
-                            <i class="fas fa-dice"></i> Teams generieren
+                            <i class="fas fa-dice" aria-hidden="true"></i> Teams generieren
                         </button>
-                        <p id="error-msg" class="text-red-500 text-sm hidden text-center"></p>
+                        <p id="error-msg" class="text-red-500 text-sm hidden text-center" role="alert"></p>
+                        <p id="apart-warning" class="text-amber-600 text-xs hidden text-center" role="status"></p>
                     </div>
                 </div>
             </div>
@@ -350,29 +388,29 @@
                 <div class="flex justify-between items-center mb-3 border-b pb-2">
                     <h2 class="font-semibold">Teilnehmer (<span id="total-count">0</span>)</h2>
                     <button id="clear-all-btn" class="text-sm text-red-400 hover:text-red-600 hidden transition-colors flex items-center gap-1">
-                        <i class="fas fa-trash-alt text-xs"></i> Alle löschen
+                        <i class="fas fa-trash-alt text-xs" aria-hidden="true"></i> Alle löschen
                     </button>
                 </div>
-                <div class="flex-grow overflow-y-auto" style="max-height: 360px;">
+                <div class="flex-grow overflow-y-auto max-h-[360px]">
                     <ul id="person-list" class="space-y-1.5">
                         <li id="empty-state" class="text-center text-gray-400 py-10 text-sm">
-                            <i class="fas fa-users text-4xl mb-3 opacity-30 block"></i>
+                            <i class="fas fa-users text-4xl mb-3 opacity-30 block" aria-hidden="true"></i>
                             Lade Schüler(innen) via Anwesenheit<br>oder füge manuell hinzu.
                         </li>
                     </ul>
                 </div>
                 <div class="mt-3 pt-3 border-t">
                     <button id="toggle-bulk-btn" class="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
-                        <i class="fas fa-list"></i> Mehrere manuell hinzufügen
+                        <i class="fas fa-list" aria-hidden="true"></i> Mehrere manuell hinzufügen
                     </button>
                     <div id="bulk-area" class="hidden mt-2 bg-white p-3 rounded-lg border border-indigo-100">
                         <p class="text-xs text-gray-500 mb-1">Format: <code class="bg-gray-100 px-1 rounded">Max ms, Anna w, Kim d</code> &nbsp;(<code class="bg-gray-100 px-1 rounded">s</code> = sportlich)</p>
-                        <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1"></i>Ohne Angabe = weiblich, nicht sportlich</p>
-                        <textarea id="bulk-input" rows="3" placeholder="Max m&#10;Anna w&#10;Kim d"
+                        <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1" aria-hidden="true"></i>Ohne Angabe = weiblich, nicht sportlich. Kürzel klein schreiben — Grossbuchstaben zählen zum Namen (z.B. "Anna M").</p>
+                        <textarea id="bulk-input" rows="3" placeholder="Max m&#10;Anna w&#10;Kim d" aria-label="Mehrere Personen, eine pro Zeile"
                             class="w-full rounded border p-2 text-xs font-mono focus:border-indigo-500 focus:outline-none"></textarea>
                         <p id="bulk-result-msg" class="text-xs text-indigo-700 hidden mt-1"></p>
                         <button id="add-bulk-btn" class="mt-2 w-full bg-indigo-100 hover:bg-indigo-200 text-indigo-800 font-medium py-1.5 px-3 rounded text-xs flex justify-center items-center gap-1.5 transition-colors">
-                            <i class="fas fa-file-import"></i> Importieren
+                            <i class="fas fa-file-import" aria-hidden="true"></i> Importieren
                         </button>
                     </div>
                 </div>
@@ -381,26 +419,29 @@
         <div id="results-section" class="hidden bg-gray-100 p-5 md:p-8 border-t border-gray-200">
             <h2 class="text-2xl font-bold mb-6 text-center text-indigo-800">Erstellte Teams</h2>
             <div id="teams-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
-            <div class="mt-6 flex justify-center gap-3 flex-wrap">
+            <div id="results-actions" class="mt-6 flex justify-center gap-3 flex-wrap no-print">
                 <button id="copy-teams-btn" class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-lg shadow-sm flex items-center gap-2 text-sm transition-colors">
-                    <i class="fas fa-copy"></i> In Zwischenablage
+                    <i class="fas fa-copy" aria-hidden="true"></i> In Zwischenablage
+                </button>
+                <button id="print-teams-btn" class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-lg shadow-sm flex items-center gap-2 text-sm transition-colors">
+                    <i class="fas fa-print" aria-hidden="true"></i> Drucken
                 </button>
                 <button id="regenerate-btn" class="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-medium py-2 px-4 rounded-lg flex items-center gap-2 text-sm transition-colors">
-                    <i class="fas fa-sync-alt"></i> Neu mischen
+                    <i class="fas fa-sync-alt" aria-hidden="true"></i> Neu mischen
                 </button>
             </div>
         </div>
     </div>
 
     <!-- Footer: Komplett-Backup -->
-    <div class="bg-gray-50 border-t border-gray-200 px-5 py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-400">
-        <span><i class="fas fa-database mr-1"></i>Alle Daten werden nur lokal in diesem Browser gespeichert.</span>
+    <div class="bg-gray-50 border-t border-gray-200 px-5 py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-400 no-print">
+        <span><i class="fas fa-database mr-1" aria-hidden="true"></i>Alle Daten bleiben lokal in diesem Browser (unverschlüsselt) — auf geteilten Geräten Backups mit Passwort schützen.</span>
         <div class="flex gap-3">
             <button id="backup-export-btn" class="text-gray-500 hover:text-indigo-600 flex items-center gap-1 transition-colors">
-                <i class="fas fa-download"></i> Komplett-Backup herunterladen
+                <i class="fas fa-download" aria-hidden="true"></i> Komplett-Backup herunterladen
             </button>
             <button id="backup-import-btn" class="text-gray-500 hover:text-indigo-600 flex items-center gap-1 transition-colors">
-                <i class="fas fa-upload"></i> Backup wiederherstellen
+                <i class="fas fa-upload" aria-hidden="true"></i> Backup wiederherstellen
             </button>
             <input type="file" id="backup-file-input" accept=".json" class="hidden">
         </div>
@@ -408,6 +449,31 @@
 
 </div>
 
+<!-- Hinweis bei fehlgeschlagenem Speichern (volles/blockiertes localStorage) -->
+<div id="storage-warning" class="hidden fixed top-3 left-1/2 -translate-x-1/2 z-50 max-w-md w-[calc(100%-2rem)] bg-red-600 text-white text-sm rounded-xl shadow-lg px-4 py-3 flex items-start gap-3" role="alert">
+    <i class="fas fa-triangle-exclamation mt-0.5" aria-hidden="true"></i>
+    <span class="flex-1">Speichern im Browser fehlgeschlagen (Speicher voll oder blockiert). Änderungen gehen beim Schliessen verloren — bitte ein Backup herunterladen.</span>
+    <button id="storage-warning-close" class="text-red-200 hover:text-white" aria-label="Hinweis schliessen"><i class="fas fa-times" aria-hidden="true"></i></button>
+</div>
+
+<!-- Modal-Dialog (ersetzt alert/confirm/prompt) -->
+<div id="modal-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-message" class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-5 fade-in">
+        <h3 id="modal-title" class="font-semibold text-gray-800 mb-2"></h3>
+        <p id="modal-message" class="text-sm text-gray-600 whitespace-pre-line"></p>
+        <input id="modal-input" type="text" class="hidden mt-3 w-full border rounded-md p-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" aria-labelledby="modal-message">
+        <p id="modal-input-hint" class="hidden text-xs text-gray-400 mt-1"></p>
+        <div class="mt-4 flex justify-end gap-2">
+            <button id="modal-cancel" class="px-4 py-2 text-sm rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50">Abbrechen</button>
+            <button id="modal-ok" class="px-4 py-2 text-sm rounded-md text-white bg-indigo-600 hover:bg-indigo-700 font-medium">OK</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toasts (z.B. "Rückgängig") -->
+<div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 space-y-2 no-print" aria-live="polite"></div>
+
+<script src="core.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
