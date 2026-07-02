@@ -21,7 +21,7 @@ const TIME_RE = /^\d{2}:\d{2}$/;
 
 const WEEKDAYS = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 const WEEKDAYS_FULL = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
-const REASON_CATEGORIES = ['Krank','Entschuldigt','Unentschuldigt','Sonstiges'];
+const REASON_CATEGORIES = ['Krank','Verletzt','Entschuldigt','Unentschuldigt','Sonstiges'];
 
 function todayStr() {
     const d = new Date();
@@ -366,6 +366,8 @@ document.getElementById('export-classes-btn').addEventListener('click', () => {
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
 });
+
+document.getElementById('import-format-help-btn').addEventListener('click', () => document.getElementById('import-format-help').classList.toggle('hidden'));
 
 const $importFileInput = document.getElementById('import-file-input');
 document.getElementById('import-classes-btn').addEventListener('click', () => $importFileInput.click());
