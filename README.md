@@ -4,11 +4,11 @@ Eine reine Client-seitige WebApp (HTML/CSS/JavaScript, kein Server nötig) zum V
 
 ## Features
 
-- **Klassen verwalten**: Klassen anlegen, umbenennen, löschen; Schüler einzeln oder per Mehrfach-Import (Text) hinzufügen. Pro Klasse kann ein **Wochenplan** hinterlegt werden (ein oder mehrere Wochentag/Uhrzeit-Termine).
-- **Import/Export**: Klassen (inkl. Wochenplan) als JSON exportieren und wieder importieren (auch CSV/TXT im Format `Klasse;Name;Geschlecht`).
+- **Klassen verwalten**: Klassen anlegen, umbenennen, löschen; Schüler einzeln oder per Mehrfach-Import (Text) hinzufügen und jederzeit wieder entfernen. Pro Klasse kann ein **Wochenplan** hinterlegt werden (ein oder mehrere Wochentag/Uhrzeit-Termine). Pro Schüler(in) kann markiert werden, ob die Person **sportlich** ist (Läufer-Symbol in der Schülerliste zum Umschalten).
+- **Import/Export**: Klassen (inkl. Wochenplan und Sportlich-Markierung) als JSON exportieren und wieder importieren (auch CSV/TXT im Format `Klasse;Name;Geschlecht;Sportlich`, letzte Spalte optional: `s`/`ja`/`x`/`1`).
 - **Anwesenheitscheck**: Pro Klasse und Datum wird eine eigene Anwesenheits-Sitzung erfasst (mehrere Termine pro Klasse möglich, z.B. jede Woche). Bei Abwesenheit kann ein Grund angegeben werden (Kategorie: Krank / Entschuldigt / Unentschuldigt / Sonstiges, plus optionale Notiz). Passt das gewählte Datum nicht zum hinterlegten Wochenplan, wird ein Hinweis angezeigt. Erfasste Termine lassen sich in der Terminliste erneut öffnen, bearbeiten oder löschen.
 - **Auswertung**: Pro Klasse eine Übersicht mit Anwesenheits-/Abwesenheitszahlen, Anwesenheitsquote und Aufschlüsselung der Abwesenheitsgründe je Schüler(in) – inkl. CSV-Export.
-- **Teams generieren**: Zufällige, optional geschlechterbalancierte Teams aus den anwesenden bzw. manuell hinzugefügten Personen erstellen, kopieren und neu mischen.
+- **Teams generieren**: Zufällige Teams aus den anwesenden bzw. manuell hinzugefügten Personen erstellen, kopieren und neu mischen. Optional werden Geschlechter und/oder **Sportlichkeit fair verteilt** (z.B. für den Sportunterricht) — die Sportlich-Markierung ist dabei bewusst **nirgends im Teams-Tab sichtbar**, damit sie beim Projizieren vor der Klasse nicht erkennbar ist.
 - **Komplett-Backup**: Über die Fusszeile lassen sich alle Daten (Klassen, Wochenpläne, Anwesenheitsdaten) als JSON sichern und auf einem anderen Gerät/Browser wiederherstellen.
 
 ## Sicherheit
@@ -52,8 +52,8 @@ Die App besteht nur aus statischen Dateien (`index.html`, `style.css`, `app.js`)
       { "weekday": 0, "time": "10:00" }
     ],
     "students": [
-      { "name": "Anna", "gender": "female" },
-      { "name": "Max", "gender": "male" }
+      { "name": "Anna", "gender": "female", "sporty": true },
+      { "name": "Max", "gender": "male", "sporty": false }
     ]
   }
 ]

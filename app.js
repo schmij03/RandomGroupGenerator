@@ -55,7 +55,7 @@ function loadStorage() {
                 classes.forEach(cls => {
                     if (!Array.isArray(cls.students)) cls.students = [];
                     if (!Array.isArray(cls.schedule)) cls.schedule = [];
-                    cls.students.forEach(s => { s.gender = sanitizeGender(s.gender); });
+                    cls.students.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; });
                 });
                 classIdCounter = parseInt(localStorage.getItem('tg2_classId')||'1',10) || 1;
                 stuIdCounter = parseInt(localStorage.getItem('tg2_stuId')||'1',10) || 1;
@@ -66,7 +66,7 @@ function loadStorage() {
             const parsed = JSON.parse(p);
             if (Array.isArray(parsed)) {
                 persons = parsed;
-                persons.forEach(x => { x.gender = sanitizeGender(x.gender); });
+                persons.forEach(x => { x.gender = sanitizeGender(x.gender); x.sporty = x.sporty === true; });
                 personIdCounter = parseInt(localStorage.getItem('tg2_personId')||'1',10) || 1;
             }
         }
@@ -275,6 +275,7 @@ document.getElementById('add-student-form').addEventListener('submit', e => {
     e.preventDefault();
     const name = document.getElementById('student-name-input').value.trim();
     const gender = document.querySelector('input[name="student-gender"]:checked').value;
+    const sporty = document.getElementById('student-sporty-input').checked;
     const errEl = document.getElementById('student-error-msg');
     if (!name || !activeClassId) return;
     const cls = classes.find(c => c.id === activeClassId);
@@ -283,8 +284,11 @@ document.getElementById('add-student-form').addEventListener('submit', e => {
         errEl.textContent = `"${name}" ist bereits in dieser Klasse.`; errEl.classList.remove('hidden');
         setTimeout(() => errEl.classList.add('hidden'), 3000); return;
     }
-    cls.students.push({ id: stuIdCounter++, name, gender });
-    saveClasses(); document.getElementById('student-name-input').value = ''; errEl.classList.add('hidden');
+    cls.students.push({ id: stuIdCounter++, name, gender, sporty });
+    saveClasses();
+    document.getElementById('student-name-input').value = '';
+    document.getElementById('student-sporty-input').checked = false;
+    errEl.classList.add('hidden');
     renderClassDetail();
 });
 
@@ -307,15 +311,24 @@ function renderStudentList(cls) {
     cls.students.forEach(s => {
         const li = document.createElement('li');
         li.className = 'flex items-center justify-between bg-white p-2 rounded-lg border border-gray-100 shadow-sm fade-in';
-        const left = document.createElement('div'); left.className = 'flex items-center gap-2';
+        const left = document.createElement('div'); left.className = 'flex items-center gap-2 min-w-0';
         const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[sanitizeGender(s.gender)];
-        const nameSpan = document.createElement('span'); nameSpan.className = 'text-sm text-gray-700'; nameSpan.textContent = s.name;
+        const nameSpan = document.createElement('span'); nameSpan.className = 'text-sm text-gray-700 truncate'; nameSpan.textContent = s.name;
         left.appendChild(icon); left.appendChild(nameSpan);
+        const actions = document.createElement('div');
+        actions.className = 'flex items-center gap-0.5 flex-shrink-0';
+        const sportyBtn = document.createElement('button');
+        sportyBtn.className = `text-xs p-1 rounded transition-colors ${s.sporty ? 'text-emerald-500 hover:text-emerald-700' : 'text-gray-200 hover:text-emerald-400'}`;
+        sportyBtn.innerHTML = '<i class="fas fa-person-running"></i>';
+        sportyBtn.title = s.sporty ? 'Sportlich (klicken zum Ändern)' : 'Nicht sportlich (klicken zum Ändern)';
+        sportyBtn.addEventListener('click', () => { s.sporty = !s.sporty; saveClasses(); renderStudentList(cls); });
         const delBtn = document.createElement('button');
         delBtn.className = 'text-gray-200 hover:text-red-500 text-xs p-1 transition-colors';
         delBtn.innerHTML = '<i class="fas fa-times"></i>';
+        delBtn.title = 'Schüler(in) entfernen';
         delBtn.addEventListener('click', () => removeStudent(s.id));
-        li.appendChild(left); li.appendChild(delBtn); ul.appendChild(li);
+        actions.appendChild(sportyBtn); actions.appendChild(delBtn);
+        li.appendChild(left); li.appendChild(actions); ul.appendChild(li);
     });
 }
 
@@ -332,9 +345,9 @@ document.getElementById('class-bulk-import-btn').addEventListener('click', () =>
     if (!cls) return;
     const text = document.getElementById('class-bulk-input').value.trim();
     if (!text) return;
-    const { added, skipped, defaults } = bulkParse(text, (name, gender) => {
+    const { added, skipped, defaults } = bulkParse(text, (name, gender, sporty) => {
         if (cls.students.find(s => s.name.toLowerCase() === name.toLowerCase())) return false;
-        cls.students.push({ id: stuIdCounter++, name, gender }); return true;
+        cls.students.push({ id: stuIdCounter++, name, gender, sporty }); return true;
     });
     saveClasses(); document.getElementById('class-bulk-input').value = '';
     showBulkMsg('class-bulk-msg', added, skipped, defaults);
@@ -345,7 +358,7 @@ document.getElementById('class-bulk-import-btn').addEventListener('click', () =>
 // KLASSEN IMPORT / EXPORT
 document.getElementById('export-classes-btn').addEventListener('click', () => {
     if (classes.length === 0) { alert('Keine Klassen zum Exportieren vorhanden.'); return; }
-    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender })) }));
+    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender, sporty: s.sporty === true })) }));
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -381,17 +394,18 @@ $importFileInput.addEventListener('change', () => {
                         if (!sName) return;
                         if (cls.students.find(st => st.name.toLowerCase() === sName.toLowerCase())) return;
                         const gender = (typeof s === 'object' && (s.gender === 'female' || s.gender === 'male' || s.gender === 'diverse')) ? s.gender : 'female';
-                        cls.students.push({ id: stuIdCounter++, name: sName, gender });
+                        const sporty = typeof s === 'object' && s.sporty === true;
+                        cls.students.push({ id: stuIdCounter++, name: sName, gender, sporty });
                         importedStudents++;
                     });
                 });
             } else {
-                // CSV / TXT: "Klasse;Name;Geschlecht" oder "Klasse,Name,Geschlecht" pro Zeile
+                // CSV / TXT: "Klasse;Name;Geschlecht;Sportlich" (Sportlich optional: s/ja/x/1) pro Zeile
                 const lines = reader.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
                 lines.forEach(line => {
                     const parts = line.split(/[;,]/).map(p => p.trim());
                     if (parts.length < 2) return;
-                    const [className, studentName, genderRaw] = parts;
+                    const [className, studentName, genderRaw, sportyRaw] = parts;
                     if (!className || !studentName) return;
                     let cls = classes.find(c => c.name.toLowerCase() === className.toLowerCase());
                     if (!cls) { cls = { id: classIdCounter++, name: className, students: [], schedule: [] }; classes.push(cls); imported++; }
@@ -399,7 +413,8 @@ $importFileInput.addEventListener('change', () => {
                     let gender = 'female';
                     const g = (genderRaw || '').toLowerCase();
                     if (g.startsWith('m')) gender = 'male'; else if (g.startsWith('d')) gender = 'diverse';
-                    cls.students.push({ id: stuIdCounter++, name: studentName, gender });
+                    const sporty = /^(s|ja|x|1|sportlich|true)$/i.test(sportyRaw || '');
+                    cls.students.push({ id: stuIdCounter++, name: studentName, gender, sporty });
                     importedStudents++;
                 });
             }
@@ -590,7 +605,7 @@ document.getElementById('load-to-teams-btn').addEventListener('click', () => {
     if (!cls) return;
     const present = cls.students.filter(s => currentSessionRecords[s.id] && currentSessionRecords[s.id].status === 'present');
     if (present.length === 0) { alert('Keine Schüler(innen) als anwesend markiert.'); return; }
-    persons = present.map(s => ({ id: personIdCounter++, name: s.name, gender: s.gender }));
+    persons = present.map(s => ({ id: personIdCounter++, name: s.name, gender: s.gender, sporty: s.sporty === true }));
     savePersons();
     document.getElementById('source-banner-text').textContent = `Geladen aus "${cls.name}": ${present.length} von ${cls.students.length} Schüler(innen) anwesend.`;
     document.getElementById('source-banner').classList.remove('hidden');
@@ -734,9 +749,9 @@ function exportStatsCsv(cls, statsRows, sessionCount) {
 }
 
 // TAB 3: TEAMS
-function addPerson(name, gender) {
+function addPerson(name, gender, sporty = false) {
     if (persons.find(p => p.name.toLowerCase() === name.toLowerCase())) { showAddError(`"${name}" ist bereits in der Liste.`); return false; }
-    persons.push({ id: personIdCounter++, name, gender }); savePersons(); renderPersonList(); return true;
+    persons.push({ id: personIdCounter++, name, gender, sporty: sporty === true }); savePersons(); renderPersonList(); return true;
 }
 function showAddError(msg) {
     const el = document.getElementById('add-error-msg'); el.textContent = msg; el.classList.remove('hidden');
@@ -748,9 +763,14 @@ document.getElementById('add-person-form').addEventListener('submit', e => {
     e.preventDefault();
     const name = document.getElementById('person-name').value.trim();
     const gender = document.querySelector('input[name="gender"]:checked').value;
+    const sporty = document.getElementById('person-sporty-input').checked;
     if (!name) return;
-    const ok = addPerson(name, gender);
-    if (ok) { document.getElementById('person-name').value = ''; document.getElementById('add-error-msg').classList.add('hidden'); }
+    const ok = addPerson(name, gender, sporty);
+    if (ok) {
+        document.getElementById('person-name').value = '';
+        document.getElementById('person-sporty-input').checked = false;
+        document.getElementById('add-error-msg').classList.add('hidden');
+    }
     document.getElementById('person-name').focus();
 });
 
@@ -795,18 +815,25 @@ document.getElementById('add-bulk-btn').addEventListener('click', () => {
     setTimeout(() => { document.getElementById('bulk-result-msg').classList.add('hidden'); document.getElementById('bulk-area').classList.add('hidden'); }, 4000);
 });
 
-// BULK PARSER (gemeinsam)
+// BULK PARSER (gemeinsam) — Tag am Zeilenende: Geschlecht (m/w/d), optional gefolgt von s = sportlich, z.B. "Max ms"
 function bulkParse(text, addFn) {
     const entries = text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
     let added = 0, skipped = 0, defaults = 0;
     entries.forEach(entry => {
-        let gender = 'female', cleanName = entry, hadTag = false;
-        const match = entry.match(/\s+\(?([mwd])\)?$/i);
-        if (match) { hadTag = true; const g = match[1].toLowerCase(); if (g==='m') gender='male'; else if (g==='d') gender='diverse'; cleanName = entry.substring(0, match.index).trim(); }
+        let gender = 'female', sporty = false, cleanName = entry, hadTag = false;
+        const match = entry.match(/\s+\(?((?:[mwd]s?)|s)\)?$/i);
+        if (match) {
+            hadTag = true;
+            const tag = match[1].toLowerCase();
+            const g = tag[0];
+            if (g === 'm') gender = 'male'; else if (g === 'd') gender = 'diverse';
+            sporty = tag.endsWith('s');
+            cleanName = entry.substring(0, match.index).trim();
+        }
         cleanName = cleanName.replace(/[\s,:\-]+$/, '').trim();
         if (!cleanName) return;
         if (!hadTag) defaults++;
-        if (addFn(cleanName, gender)) added++; else skipped++;
+        if (addFn(cleanName, gender, sporty)) added++; else skipped++;
     });
     return { added, skipped, defaults };
 }
@@ -829,7 +856,8 @@ document.getElementById('regenerate-btn').addEventListener('click', generateTeam
 
 function generateTeams() {
     const n = parseInt(document.getElementById('num-teams').value, 10);
-    const balance = document.getElementById('balance-gender').checked;
+    const balanceGender = document.getElementById('balance-gender').checked;
+    const balanceSport = document.getElementById('balance-sport').checked;
     const errEl = document.getElementById('error-msg');
     errEl.classList.add('hidden');
     if (persons.length === 0) { errEl.textContent = 'Bitte füge zuerst Personen hinzu.'; errEl.classList.remove('hidden'); return; }
@@ -837,12 +865,20 @@ function generateTeams() {
     if (n > persons.length)  { errEl.textContent = 'Mehr Teams als Teilnehmer.';         errEl.classList.remove('hidden'); return; }
     let teams = Array.from({ length: n }, () => []);
     const shuf = shuffleArray(persons);
-    if (balance) {
-        const f = shuf.filter(p => p.gender === 'female');
-        const m = shuf.filter(p => p.gender === 'male');
-        const d = shuf.filter(p => p.gender === 'diverse');
+    if (balanceGender || balanceSport) {
+        // Personen in Gruppen mit gleichen Ausgleichs-Merkmalen aufteilen und diese
+        // mit fortlaufendem Index über die Teams verteilen: so landet jede Gruppe
+        // (z.B. "sportlich + weiblich") möglichst gleichmässig in allen Teams.
+        const sportKeys = balanceSport ? [true, false] : [null];
+        const genderKeys = balanceGender ? ['female', 'male', 'diverse'] : [null];
+        const strata = [];
+        sportKeys.forEach(sp => genderKeys.forEach(g => {
+            strata.push(shuf.filter(p =>
+                (sp === null || (p.sporty === true) === sp) &&
+                (g === null || p.gender === g)));
+        }));
         let idx = 0;
-        [f, m, d].forEach(grp => grp.forEach(p => { teams[idx].push(p); idx = (idx + 1) % n; }));
+        strata.forEach(grp => grp.forEach(p => { teams[idx].push(p); idx = (idx + 1) % n; }));
         teams = teams.map(t => shuffleArray(t));
     } else {
         shuf.forEach((p, i) => teams[i % n].push(p));
@@ -965,7 +1001,7 @@ function validateBackup(data) {
         const students = [];
         for (const s of (Array.isArray(cls.students) ? cls.students : [])) {
             if (!s || typeof s !== 'object' || !Number.isInteger(s.id) || typeof s.name !== 'string' || !s.name.trim()) continue;
-            students.push({ id: s.id, name: s.name.trim(), gender: sanitizeGender(s.gender) });
+            students.push({ id: s.id, name: s.name.trim(), gender: sanitizeGender(s.gender), sporty: s.sporty === true });
             if (s.id > maxStuId) maxStuId = s.id;
         }
         const schedule = (Array.isArray(cls.schedule) ? cls.schedule : [])
