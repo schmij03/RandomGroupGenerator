@@ -52,6 +52,9 @@
                 <div class="flex items-center justify-between mb-4 border-b pb-2">
                     <h2 class="text-lg font-semibold">Meine Klassen</h2>
                     <div class="flex items-center gap-2">
+                        <button id="import-format-help-btn" class="text-xs text-gray-400 hover:text-indigo-600 p-1.5 rounded-md transition-colors" title="Format-Beispiele für den Klassen-Import anzeigen">
+                            <i class="fas fa-circle-question"></i>
+                        </button>
                         <button id="import-classes-btn" class="text-xs text-gray-400 hover:text-indigo-600 px-2 py-1.5 rounded-md flex items-center gap-1 transition-colors" title="Klassen aus JSON-Datei importieren">
                             <i class="fas fa-file-upload"></i> <span class="hidden lg:inline">Import</span>
                         </button>
@@ -63,6 +66,24 @@
                             <i class="fas fa-plus text-xs"></i> Neue Klasse
                         </button>
                     </div>
+                </div>
+                <div id="import-format-help" class="hidden mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200 text-xs text-gray-600 space-y-2">
+                    <p class="font-medium text-gray-700"><i class="fas fa-file-csv mr-1"></i>CSV/TXT — eine Zeile pro Schüler(in):</p>
+                    <pre class="bg-white border rounded p-2 overflow-x-auto">Klasse;Name;Geschlecht;Sportlich
+7a;Anna;w;s
+7a;Max;m;
+7a;Kim;d;s</pre>
+                    <p class="text-gray-400">Geschlecht: <code class="bg-gray-200 px-1 rounded">w</code>/<code class="bg-gray-200 px-1 rounded">m</code>/<code class="bg-gray-200 px-1 rounded">d</code>. Sportlich (letzte Spalte, optional): <code class="bg-gray-200 px-1 rounded">s</code>, <code class="bg-gray-200 px-1 rounded">ja</code>, <code class="bg-gray-200 px-1 rounded">x</code> oder <code class="bg-gray-200 px-1 rounded">1</code> — leer lassen für "nicht sportlich".</p>
+                    <p class="font-medium text-gray-700 pt-1"><i class="fas fa-file-code mr-1"></i>JSON — z.B. aus dem "Export" erzeugt:</p>
+                    <pre class="bg-white border rounded p-2 overflow-x-auto">[
+  {
+    "name": "7a",
+    "students": [
+      { "name": "Anna", "gender": "female", "sporty": true },
+      { "name": "Max", "gender": "male", "sporty": false }
+    ]
+  }
+]</pre>
                 </div>
                 <div id="new-class-form" class="hidden mb-4 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Klassenname</label>
