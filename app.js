@@ -1,13 +1,33 @@
 // STATE
 let classes = [], classIdCounter = 1, stuIdCounter = 1;
-let activeClassId = null, selAttendClassId = null, presentIds = new Set();
+let activeClassId = null, selAttendClassId = null;
 let persons = [], personIdCounter = 1;
+// attendanceData: { [classId]: { [dateStr]: { date, weekday, records: { [studentId]: {status, reasonCategory, note} } } } }
+let attendanceData = {};
+// currentSessionRecords: { [studentId]: {status:'present'|'absent', reasonCategory:'', note:''} } for the class/date currently shown in the Anwesenheit tab
+let currentSessionRecords = {};
 
 const GENDER_ICONS = {
     female:  '<i class="fas fa-venus text-pink-500" title="Weiblich"></i>',
     male:    '<i class="fas fa-mars text-blue-500" title="Männlich"></i>',
     diverse: '<i class="fas fa-genderless text-purple-500" title="Divers"></i>'
 };
+
+const WEEKDAYS = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+const WEEKDAYS_FULL = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
+const REASON_CATEGORIES = ['Krank','Entschuldigt','Unentschuldigt','Sonstiges'];
+
+function todayStr() {
+    const d = new Date();
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+function getWeekdayIndex(dateStr) {
+    return (new Date(dateStr + 'T00:00:00').getDay() + 6) % 7;
+}
+function formatDateDisplay(dateStr) {
+    const [y, m, d] = dateStr.split('-');
+    return `${d}.${m}.${y}`;
+}
 
 // STORAGE
 function saveClasses() {
@@ -16,22 +36,60 @@ function saveClasses() {
 function savePersons() {
     try { localStorage.setItem('tg2_persons', JSON.stringify(persons)); localStorage.setItem('tg2_personId', String(personIdCounter)); } catch(e) {}
 }
+function saveAttendanceData() {
+    try { localStorage.setItem('tg2_attendance', JSON.stringify(attendanceData)); } catch(e) {}
+}
 function loadStorage() {
     try {
         const c = localStorage.getItem('tg2_classes');
         if (c) { classes = JSON.parse(c); classIdCounter = parseInt(localStorage.getItem('tg2_classId')||'1',10); stuIdCounter = parseInt(localStorage.getItem('tg2_stuId')||'1',10); }
         const p = localStorage.getItem('tg2_persons');
         if (p) { persons = JSON.parse(p); personIdCounter = parseInt(localStorage.getItem('tg2_personId')||'1',10); }
+        const a = localStorage.getItem('tg2_attendance');
+        if (a) attendanceData = JSON.parse(a);
     } catch(e) {}
 }
 
 // TABS
 document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
 function switchTab(tab) {
-    ['classes','attendance','teams'].forEach(t => document.getElementById('tab-'+t).classList.toggle('hidden', t !== tab));
+    ['classes','attendance','stats','teams'].forEach(t => document.getElementById('tab-'+t).classList.toggle('hidden', t !== tab));
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
     if (tab === 'attendance') refreshAttendanceSelect();
+    if (tab === 'stats') refreshStatsSelect();
     if (tab === 'teams') renderPersonList();
+}
+
+// WOCHENPLAN (gemeinsame Helfer für Klassen-Formular & Detailansicht)
+function createScheduleRow(container, entry) {
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-1.5 schedule-row';
+    const sel = document.createElement('select');
+    sel.className = 'schedule-weekday border rounded-md p-1.5 text-xs bg-white focus:border-indigo-500 focus:outline-none';
+    sel.innerHTML = '<option value="">Tag</option>' + WEEKDAYS.map((w, i) => `<option value="${i}">${w}</option>`).join('');
+    if (entry && entry.weekday !== undefined && entry.weekday !== null) sel.value = String(entry.weekday);
+    const time = document.createElement('input');
+    time.type = 'time';
+    time.className = 'schedule-time border rounded-md p-1.5 text-xs flex-1 focus:border-indigo-500 focus:outline-none';
+    if (entry && entry.time) time.value = entry.time;
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'text-gray-300 hover:text-red-500 px-1';
+    rm.innerHTML = '<i class="fas fa-times text-xs"></i>';
+    rm.addEventListener('click', () => row.remove());
+    row.appendChild(sel); row.appendChild(time); row.appendChild(rm);
+    container.appendChild(row);
+    return row;
+}
+function readScheduleRows(container) {
+    const schedule = [];
+    container.querySelectorAll('.schedule-row').forEach(row => {
+        const weekday = row.querySelector('.schedule-weekday').value;
+        const time = row.querySelector('.schedule-time').value;
+        if (weekday === '' || !time) return;
+        schedule.push({ weekday: parseInt(weekday, 10), time });
+    });
+    return schedule;
 }
 
 // TAB 1: KLASSEN
@@ -39,8 +97,17 @@ const $newClassForm = document.getElementById('new-class-form');
 const $newClassName = document.getElementById('new-class-name');
 const $newClassErr  = document.getElementById('new-class-error');
 
-document.getElementById('create-class-btn').addEventListener('click', () => { $newClassForm.classList.remove('hidden'); $newClassName.focus(); });
-document.getElementById('cancel-class-btn').addEventListener('click', () => { $newClassForm.classList.add('hidden'); $newClassName.value = ''; $newClassErr.classList.add('hidden'); });
+const $newClassScheduleRows = document.getElementById('new-class-schedule-rows');
+
+function resetNewClassForm() {
+    $newClassName.value = ''; $newClassErr.classList.add('hidden');
+    $newClassScheduleRows.innerHTML = '';
+    createScheduleRow($newClassScheduleRows);
+}
+
+document.getElementById('create-class-btn').addEventListener('click', () => { $newClassForm.classList.remove('hidden'); resetNewClassForm(); $newClassName.focus(); });
+document.getElementById('cancel-class-btn').addEventListener('click', () => { $newClassForm.classList.add('hidden'); resetNewClassForm(); });
+document.getElementById('new-class-schedule-add-btn').addEventListener('click', () => createScheduleRow($newClassScheduleRows));
 document.getElementById('save-class-btn').addEventListener('click', doCreateClass);
 $newClassName.addEventListener('keydown', e => { if (e.key === 'Enter') doCreateClass(); });
 
@@ -48,9 +115,10 @@ function doCreateClass() {
     const name = $newClassName.value.trim();
     if (!name) return;
     if (classes.find(c => c.name.toLowerCase() === name.toLowerCase())) { $newClassErr.textContent = `Eine Klasse "${name}" existiert bereits.`; $newClassErr.classList.remove('hidden'); return; }
-    classes.push({ id: classIdCounter++, name, students: [] });
+    const schedule = readScheduleRows($newClassScheduleRows);
+    classes.push({ id: classIdCounter++, name, students: [], schedule });
     saveClasses();
-    $newClassForm.classList.add('hidden'); $newClassName.value = ''; $newClassErr.classList.add('hidden');
+    $newClassForm.classList.add('hidden'); resetNewClassForm();
     renderClassList();
     selectClass(classes[classes.length - 1].id);
 }
@@ -108,11 +176,12 @@ function renameClass(id) {
 
 function deleteClass(id) {
     const cls = classes.find(c => c.id === id);
-    if (!cls || !confirm(`Klasse "${cls.name}" wirklich löschen?`)) return;
+    if (!cls || !confirm(`Klasse "${cls.name}" wirklich löschen? Damit werden auch alle erfassten Anwesenheiten dieser Klasse gelöscht.`)) return;
     classes = classes.filter(c => c.id !== id);
     if (activeClassId === id) activeClassId = null;
-    if (selAttendClassId === id) { selAttendClassId = null; presentIds = new Set(); }
-    saveClasses(); renderClassList(); renderClassDetail();
+    if (selAttendClassId === id) { selAttendClassId = null; currentSessionRecords = {}; }
+    delete attendanceData[id];
+    saveClasses(); saveAttendanceData(); renderClassList(); renderClassDetail();
 }
 
 function renderClassDetail() {
@@ -123,8 +192,56 @@ function renderClassDetail() {
     panel.classList.remove('hidden'); noSel.classList.add('hidden');
     document.getElementById('detail-class-name').textContent = cls.name;
     document.getElementById('detail-student-count').textContent = `${cls.students.length} Schüler(in)`;
+    document.getElementById('detail-schedule-edit').classList.add('hidden');
+    document.getElementById('detail-schedule-display').classList.remove('hidden');
+    renderScheduleDisplayBadges(cls);
     renderStudentList(cls);
 }
+
+function renderScheduleDisplayBadges(cls) {
+    const disp = document.getElementById('detail-schedule-display');
+    disp.innerHTML = '';
+    if (!cls.schedule || cls.schedule.length === 0) {
+        const span = document.createElement('span');
+        span.className = 'text-xs text-gray-400 italic';
+        span.textContent = 'Kein Wochenplan hinterlegt.';
+        disp.appendChild(span);
+        return;
+    }
+    cls.schedule.slice().sort((a, b) => a.weekday - b.weekday || a.time.localeCompare(b.time)).forEach(e => {
+        const badge = document.createElement('span');
+        badge.className = 'text-xs bg-white border border-indigo-200 text-indigo-700 px-2 py-1 rounded-full';
+        badge.textContent = `${WEEKDAYS[e.weekday]} ${e.time}`;
+        disp.appendChild(badge);
+    });
+}
+
+document.getElementById('edit-schedule-btn').addEventListener('click', () => {
+    const cls = classes.find(c => c.id === activeClassId);
+    if (!cls) return;
+    const editDiv = document.getElementById('detail-schedule-edit');
+    const displayDiv = document.getElementById('detail-schedule-display');
+    const rowsContainer = document.getElementById('detail-schedule-rows');
+    const opening = editDiv.classList.contains('hidden');
+    if (opening) {
+        rowsContainer.innerHTML = '';
+        if (cls.schedule && cls.schedule.length) cls.schedule.forEach(e => createScheduleRow(rowsContainer, e));
+        else createScheduleRow(rowsContainer);
+        editDiv.classList.remove('hidden'); displayDiv.classList.add('hidden');
+    } else {
+        editDiv.classList.add('hidden'); displayDiv.classList.remove('hidden');
+    }
+});
+document.getElementById('detail-schedule-add-btn').addEventListener('click', () => createScheduleRow(document.getElementById('detail-schedule-rows')));
+document.getElementById('detail-schedule-save-btn').addEventListener('click', () => {
+    const cls = classes.find(c => c.id === activeClassId);
+    if (!cls) return;
+    cls.schedule = readScheduleRows(document.getElementById('detail-schedule-rows'));
+    saveClasses();
+    document.getElementById('detail-schedule-edit').classList.add('hidden');
+    document.getElementById('detail-schedule-display').classList.remove('hidden');
+    renderScheduleDisplayBadges(cls);
+});
 
 document.getElementById('add-student-form').addEventListener('submit', e => {
     e.preventDefault();
@@ -200,7 +317,7 @@ document.getElementById('class-bulk-import-btn').addEventListener('click', () =>
 // KLASSEN IMPORT / EXPORT
 document.getElementById('export-classes-btn').addEventListener('click', () => {
     if (classes.length === 0) { alert('Keine Klassen zum Exportieren vorhanden.'); return; }
-    const data = classes.map(c => ({ name: c.name, students: c.students.map(s => ({ name: s.name, gender: s.gender })) }));
+    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender })) }));
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -225,7 +342,12 @@ $importFileInput.addEventListener('change', () => {
                     const name = (entry.name || '').trim();
                     if (!name) return;
                     let cls = classes.find(c => c.name.toLowerCase() === name.toLowerCase());
-                    if (!cls) { cls = { id: classIdCounter++, name, students: [] }; classes.push(cls); imported++; }
+                    if (!cls) {
+                        const schedule = Array.isArray(entry.schedule)
+                            ? entry.schedule.filter(e => e && Number.isInteger(e.weekday) && e.weekday >= 0 && e.weekday <= 6 && e.time).map(e => ({ weekday: e.weekday, time: e.time }))
+                            : [];
+                        cls = { id: classIdCounter++, name, students: [], schedule }; classes.push(cls); imported++;
+                    }
                     (entry.students || []).forEach(s => {
                         const sName = (typeof s === 'string' ? s : s.name || '').trim();
                         if (!sName) return;
@@ -244,7 +366,7 @@ $importFileInput.addEventListener('change', () => {
                     const [className, studentName, genderRaw] = parts;
                     if (!className || !studentName) return;
                     let cls = classes.find(c => c.name.toLowerCase() === className.toLowerCase());
-                    if (!cls) { cls = { id: classIdCounter++, name: className, students: [] }; classes.push(cls); imported++; }
+                    if (!cls) { cls = { id: classIdCounter++, name: className, students: [], schedule: [] }; classes.push(cls); imported++; }
                     if (cls.students.find(st => st.name.toLowerCase() === studentName.toLowerCase())) return;
                     let gender = 'female';
                     const g = (genderRaw || '').toLowerCase();
@@ -274,6 +396,8 @@ function refreshAttendanceSelect() {
         sel.appendChild(opt);
     });
     if (prev && classes.find(c => String(c.id) === prev)) sel.value = prev;
+    const dateInput = document.getElementById('attendance-date-input');
+    if (!dateInput.value) dateInput.value = todayStr();
 }
 
 document.getElementById('attendance-class-select').addEventListener('change', function() {
@@ -281,52 +405,158 @@ document.getElementById('attendance-class-select').addEventListener('change', fu
     const emptyEl = document.getElementById('attendance-empty');
     const contentEl = document.getElementById('attendance-content');
     if (isNaN(id)) {
-        selAttendClassId = null; presentIds = new Set();
+        selAttendClassId = null; currentSessionRecords = {};
         emptyEl.classList.remove('hidden'); contentEl.classList.add('hidden'); return;
     }
-    if (selAttendClassId !== id) {
-        selAttendClassId = id;
-        const cls = classes.find(c => c.id === id);
-        presentIds = cls ? new Set(cls.students.map(s => s.id)) : new Set();
-    }
+    selAttendClassId = id;
     emptyEl.classList.add('hidden'); contentEl.classList.remove('hidden');
-    renderAttendanceGrid();
+    loadAttendanceSession();
 });
 
-document.getElementById('all-present-btn').addEventListener('click', () => {
-    const cls = classes.find(c => c.id === selAttendClassId);
-    if (cls) { cls.students.forEach(s => presentIds.add(s.id)); renderAttendanceGrid(); }
+document.getElementById('attendance-date-input').addEventListener('change', () => {
+    if (selAttendClassId !== null) loadAttendanceSession();
 });
-document.getElementById('all-absent-btn').addEventListener('click', () => { presentIds = new Set(); renderAttendanceGrid(); });
+
+function loadAttendanceSession() {
+    const cls = classes.find(c => c.id === selAttendClassId);
+    if (!cls) return;
+    const dateInput = document.getElementById('attendance-date-input');
+    const dateStr = dateInput.value || todayStr();
+    dateInput.value = dateStr;
+    const existing = attendanceData[cls.id] && attendanceData[cls.id][dateStr];
+    currentSessionRecords = {};
+    cls.students.forEach(s => {
+        const rec = existing && existing.records[s.id];
+        currentSessionRecords[s.id] = rec ? { status: rec.status, reasonCategory: rec.reasonCategory || '', note: rec.note || '' } : { status: 'present', reasonCategory: '', note: '' };
+    });
+    document.getElementById('attendance-saved-msg').classList.add('hidden');
+    renderScheduleHint(cls, dateStr);
+    renderAttendanceGrid();
+    renderAttendanceSessionsList(cls);
+}
+
+function renderScheduleHint(cls, dateStr) {
+    const hintEl = document.getElementById('attendance-schedule-hint');
+    const textEl = hintEl.querySelector('span');
+    if (!cls.schedule || cls.schedule.length === 0) { hintEl.classList.add('hidden'); return; }
+    const weekday = getWeekdayIndex(dateStr);
+    const matches = cls.schedule.filter(e => e.weekday === weekday);
+    if (matches.length > 0) {
+        textEl.textContent = `Geplanter Termin: ${WEEKDAYS_FULL[weekday]}, ${matches.map(m => m.time).join(' / ')} Uhr.`;
+    } else {
+        textEl.textContent = `Hinweis: Laut Wochenplan von "${cls.name}" ist am ${WEEKDAYS_FULL[weekday]} normalerweise kein Termin vorgesehen.`;
+    }
+    hintEl.classList.remove('hidden');
+}
+
+document.getElementById('all-present-btn').addEventListener('click', () => {
+    Object.keys(currentSessionRecords).forEach(id => { currentSessionRecords[id].status = 'present'; });
+    renderAttendanceGrid();
+});
+document.getElementById('all-absent-btn').addEventListener('click', () => {
+    Object.keys(currentSessionRecords).forEach(id => { currentSessionRecords[id].status = 'absent'; });
+    renderAttendanceGrid();
+});
 
 function renderAttendanceGrid() {
     const cls = classes.find(c => c.id === selAttendClassId);
     if (!cls) return;
+    const presentCount = Object.values(currentSessionRecords).filter(r => r.status === 'present').length;
     document.getElementById('total-students-count').textContent = cls.students.length;
-    document.getElementById('present-count').textContent = presentIds.size;
-    document.getElementById('load-to-teams-label').textContent = `Teams erstellen mit ${presentIds.size} Schüler${presentIds.size === 1 ? '' : 'n'}`;
+    document.getElementById('present-count').textContent = presentCount;
+    document.getElementById('load-to-teams-label').textContent = `Teams erstellen mit ${presentCount} Schüler${presentCount === 1 ? '' : 'n'}`;
     const grid = document.getElementById('attendance-grid');
     grid.innerHTML = '';
     if (cls.students.length === 0) { grid.innerHTML = '<p class="text-sm text-gray-400 col-span-full text-center py-6">Diese Klasse hat noch keine Schüler.</p>'; return; }
     cls.students.forEach(s => {
-        const present = presentIds.has(s.id);
+        const rec = currentSessionRecords[s.id];
+        const present = rec.status === 'present';
         const card = document.createElement('div');
-        card.className = `attendance-card flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer select-none ${present ? 'bg-green-50 border-green-400 text-green-900' : 'bg-gray-50 border-gray-200 text-gray-400'}`;
-        card.addEventListener('click', () => { if (presentIds.has(s.id)) presentIds.delete(s.id); else presentIds.add(s.id); renderAttendanceGrid(); });
+        card.className = `attendance-card p-3 rounded-xl border-2 select-none ${present ? 'bg-green-50 border-green-400 text-green-900' : 'bg-red-50 border-red-300 text-red-900'}`;
+        const topRow = document.createElement('div');
+        topRow.className = 'flex items-center gap-3 cursor-pointer';
+        topRow.addEventListener('click', () => { rec.status = present ? 'absent' : 'present'; renderAttendanceGrid(); });
         const checkbox = document.createElement('div');
-        checkbox.className = `w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${present ? 'bg-green-500 border-green-500' : 'border-gray-300'}`;
-        if (present) checkbox.innerHTML = '<i class="fas fa-check text-white text-xs"></i>';
+        checkbox.className = `w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${present ? 'bg-green-500 border-green-500' : 'bg-red-400 border-red-400'}`;
+        checkbox.innerHTML = present ? '<i class="fas fa-check text-white text-xs"></i>' : '<i class="fas fa-times text-white text-xs"></i>';
         const iconSpan = document.createElement('span'); iconSpan.innerHTML = GENDER_ICONS[s.gender];
         const nameSpan = document.createElement('span'); nameSpan.className = 'font-medium text-sm flex-1 truncate'; nameSpan.textContent = s.name;
-        card.appendChild(checkbox); card.appendChild(iconSpan); card.appendChild(nameSpan);
+        topRow.appendChild(checkbox); topRow.appendChild(iconSpan); topRow.appendChild(nameSpan);
+        card.appendChild(topRow);
+        if (!present) {
+            const reasonRow = document.createElement('div');
+            reasonRow.className = 'flex flex-col sm:flex-row gap-1.5 mt-2 pt-2 border-t border-red-200';
+            const sel = document.createElement('select');
+            sel.className = 'text-xs border border-red-200 rounded-md p-1.5 bg-white focus:outline-none focus:border-red-400';
+            sel.innerHTML = '<option value="">Grund wählen…</option>' + REASON_CATEGORIES.map(r => `<option value="${r}">${r}</option>`).join('');
+            sel.value = rec.reasonCategory || '';
+            sel.addEventListener('click', e => e.stopPropagation());
+            sel.addEventListener('change', e => { rec.reasonCategory = e.target.value; });
+            const note = document.createElement('input');
+            note.type = 'text'; note.placeholder = 'Notiz (optional)'; note.value = rec.note || '';
+            note.className = 'text-xs border border-red-200 rounded-md p-1.5 flex-1 focus:outline-none focus:border-red-400';
+            note.addEventListener('click', e => e.stopPropagation());
+            note.addEventListener('input', e => { rec.note = e.target.value; });
+            reasonRow.appendChild(sel); reasonRow.appendChild(note);
+            card.appendChild(reasonRow);
+        }
         grid.appendChild(card);
+    });
+}
+
+document.getElementById('save-attendance-btn').addEventListener('click', () => {
+    const cls = classes.find(c => c.id === selAttendClassId);
+    if (!cls) return;
+    const dateStr = document.getElementById('attendance-date-input').value || todayStr();
+    if (!attendanceData[cls.id]) attendanceData[cls.id] = {};
+    const records = {};
+    Object.keys(currentSessionRecords).forEach(id => { records[id] = { ...currentSessionRecords[id] }; });
+    attendanceData[cls.id][dateStr] = { date: dateStr, weekday: getWeekdayIndex(dateStr), records };
+    saveAttendanceData();
+    const msg = document.getElementById('attendance-saved-msg');
+    msg.classList.remove('hidden');
+    renderAttendanceSessionsList(cls);
+});
+
+function renderAttendanceSessionsList(cls) {
+    const list = document.getElementById('attendance-sessions-list');
+    list.innerHTML = '';
+    const sessions = attendanceData[cls.id] ? Object.values(attendanceData[cls.id]).sort((a, b) => b.date.localeCompare(a.date)) : [];
+    if (sessions.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'text-gray-400 text-xs py-2';
+        li.textContent = 'Noch keine Termine für diese Klasse gespeichert.';
+        list.appendChild(li);
+        return;
+    }
+    sessions.forEach(session => {
+        const presentN = Object.values(session.records).filter(r => r.status === 'present').length;
+        const totalN = Object.values(session.records).length;
+        const li = document.createElement('li');
+        li.className = 'flex items-center justify-between bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-sm';
+        const left = document.createElement('button');
+        left.className = 'flex items-center gap-2 text-left hover:text-indigo-600 transition-colors';
+        left.innerHTML = `<span class="font-medium">${formatDateDisplay(session.date)}</span><span class="text-xs text-gray-400">${WEEKDAYS[session.weekday]}</span><span class="text-xs text-gray-400">· ${presentN}/${totalN} anwesend</span>`;
+        left.addEventListener('click', () => { document.getElementById('attendance-date-input').value = session.date; loadAttendanceSession(); });
+        const delBtn = document.createElement('button');
+        delBtn.className = 'text-gray-300 hover:text-red-500 text-xs p-1';
+        delBtn.innerHTML = '<i class="fas fa-trash-alt"></i>';
+        delBtn.addEventListener('click', () => {
+            if (!confirm(`Termin vom ${formatDateDisplay(session.date)} wirklich löschen?`)) return;
+            delete attendanceData[cls.id][session.date];
+            saveAttendanceData();
+            if (document.getElementById('attendance-date-input').value === session.date) loadAttendanceSession();
+            else renderAttendanceSessionsList(cls);
+        });
+        li.appendChild(left); li.appendChild(delBtn);
+        list.appendChild(li);
     });
 }
 
 document.getElementById('load-to-teams-btn').addEventListener('click', () => {
     const cls = classes.find(c => c.id === selAttendClassId);
     if (!cls) return;
-    const present = cls.students.filter(s => presentIds.has(s.id));
+    const present = cls.students.filter(s => currentSessionRecords[s.id] && currentSessionRecords[s.id].status === 'present');
     if (present.length === 0) { alert('Keine Schüler(innen) als anwesend markiert.'); return; }
     persons = present.map(s => ({ id: personIdCounter++, name: s.name, gender: s.gender }));
     savePersons();
@@ -335,6 +565,95 @@ document.getElementById('load-to-teams-btn').addEventListener('click', () => {
     document.getElementById('results-section').classList.add('hidden');
     switchTab('teams');
 });
+
+// TAB: AUSWERTUNG
+function refreshStatsSelect() {
+    const sel = document.getElementById('stats-class-select');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">-- Klasse wählen --</option>';
+    classes.forEach(cls => {
+        const opt = document.createElement('option');
+        opt.value = String(cls.id); opt.textContent = cls.name;
+        sel.appendChild(opt);
+    });
+    if (prev && classes.find(c => String(c.id) === prev)) { sel.value = prev; renderStats(); }
+}
+
+document.getElementById('stats-class-select').addEventListener('change', renderStats);
+
+function renderStats() {
+    const id = parseInt(document.getElementById('stats-class-select').value, 10);
+    const emptyEl = document.getElementById('stats-empty');
+    const contentEl = document.getElementById('stats-content');
+    const exportBtn = document.getElementById('export-stats-btn');
+    const cls = classes.find(c => c.id === id);
+    const sessions = cls && attendanceData[cls.id] ? Object.values(attendanceData[cls.id]).sort((a, b) => a.date.localeCompare(b.date)) : [];
+    if (!cls || sessions.length === 0) {
+        emptyEl.classList.remove('hidden'); contentEl.classList.add('hidden'); exportBtn.classList.add('hidden');
+        return;
+    }
+    emptyEl.classList.add('hidden'); contentEl.classList.remove('hidden'); exportBtn.classList.remove('hidden');
+    document.getElementById('stats-session-count').textContent = sessions.length;
+
+    const statsRows = cls.students.map(s => {
+        let present = 0, absent = 0;
+        const reasonCounts = {};
+        sessions.forEach(session => {
+            const rec = session.records[s.id];
+            if (!rec) return;
+            if (rec.status === 'present') present++;
+            else {
+                absent++;
+                const key = rec.reasonCategory || 'Ohne Angabe';
+                reasonCounts[key] = (reasonCounts[key] || 0) + 1;
+            }
+        });
+        const total = present + absent;
+        const quote = total > 0 ? Math.round((present / total) * 100) : null;
+        return { student: s, present, absent, quote, reasonCounts };
+    });
+
+    const tbody = document.getElementById('stats-table-body');
+    tbody.innerHTML = '';
+    statsRows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-t border-gray-100';
+        const nameTd = document.createElement('td');
+        nameTd.className = 'px-3 py-2 flex items-center gap-2';
+        nameTd.innerHTML = `${GENDER_ICONS[row.student.gender]} <span class="font-medium">${row.student.name}</span>`;
+        const presentTd = document.createElement('td'); presentTd.className = 'text-center px-3 py-2 text-green-700'; presentTd.textContent = row.present;
+        const absentTd = document.createElement('td'); absentTd.className = 'text-center px-3 py-2 text-red-600'; absentTd.textContent = row.absent;
+        const quoteTd = document.createElement('td');
+        quoteTd.className = 'text-center px-3 py-2 font-semibold';
+        if (row.quote !== null) {
+            quoteTd.textContent = `${row.quote}%`;
+            quoteTd.className += row.quote < 80 ? ' text-red-600' : row.quote < 95 ? ' text-amber-600' : ' text-green-700';
+        } else { quoteTd.textContent = '–'; }
+        const reasonsTd = document.createElement('td');
+        reasonsTd.className = 'px-3 py-2 text-xs text-gray-500';
+        const reasonEntries = Object.entries(row.reasonCounts);
+        reasonsTd.textContent = reasonEntries.length ? reasonEntries.map(([k, v]) => `${k}: ${v}`).join(', ') : '–';
+        tr.appendChild(nameTd); tr.appendChild(presentTd); tr.appendChild(absentTd); tr.appendChild(quoteTd); tr.appendChild(reasonsTd);
+        tbody.appendChild(tr);
+    });
+
+    exportBtn.onclick = () => exportStatsCsv(cls, statsRows, sessions.length);
+}
+
+function exportStatsCsv(cls, statsRows, sessionCount) {
+    const escapeCsv = v => `"${String(v).replace(/"/g, '""')}"`;
+    const lines = [['Name', 'Anwesend', 'Abwesend', 'Quote (%)', 'Gründe'].map(escapeCsv).join(';')];
+    statsRows.forEach(row => {
+        const reasons = Object.entries(row.reasonCounts).map(([k, v]) => `${k}: ${v}`).join(', ');
+        lines.push([row.student.name, row.present, row.absent, row.quote === null ? '' : row.quote, reasons].map(escapeCsv).join(';'));
+    });
+    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `anwesenheit-${cls.name}-${todayStr()}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 // TAB 3: TEAMS
 function addPerson(name, gender) {

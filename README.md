@@ -1,12 +1,13 @@
 # Team Generator
 
-Eine reine Client-seitige WebApp (HTML/CSS/JavaScript, kein Server nötig) zum Verwalten von Klassen, Erfassen der Anwesenheit und Erstellen von zufälligen Teams. Alle Daten werden im `localStorage` des Browsers gespeichert.
+Eine reine Client-seitige WebApp (HTML/CSS/JavaScript, kein Server nötig) zum Verwalten von Klassen, Führen eines Anwesenheitschecks mit Wochenplan und Abwesenheitsgründen, Auswerten der Anwesenheit und Erstellen von zufälligen Teams. Alle Daten werden im `localStorage` des Browsers gespeichert.
 
 ## Features
 
-- **Klassen verwalten**: Klassen anlegen, umbenennen, löschen; Schüler einzeln oder per Mehrfach-Import (Text) hinzufügen.
-- **Import/Export**: Klassen als JSON exportieren und wieder importieren (auch CSV/TXT im Format `Klasse;Name;Geschlecht`).
-- **Anwesenheit**: Pro Klasse Schüler als anwesend/abwesend markieren.
+- **Klassen verwalten**: Klassen anlegen, umbenennen, löschen; Schüler einzeln oder per Mehrfach-Import (Text) hinzufügen. Pro Klasse kann ein **Wochenplan** hinterlegt werden (ein oder mehrere Wochentag/Uhrzeit-Termine).
+- **Import/Export**: Klassen (inkl. Wochenplan) als JSON exportieren und wieder importieren (auch CSV/TXT im Format `Klasse;Name;Geschlecht`).
+- **Anwesenheitscheck**: Pro Klasse und Datum wird eine eigene Anwesenheits-Sitzung erfasst (mehrere Termine pro Klasse möglich, z.B. jede Woche). Bei Abwesenheit kann ein Grund angegeben werden (Kategorie: Krank / Entschuldigt / Unentschuldigt / Sonstiges, plus optionale Notiz). Passt das gewählte Datum nicht zum hinterlegten Wochenplan, wird ein Hinweis angezeigt. Erfasste Termine lassen sich in der Terminliste erneut öffnen, bearbeiten oder löschen.
+- **Auswertung**: Pro Klasse eine Übersicht mit Anwesenheits-/Abwesenheitszahlen, Anwesenheitsquote und Aufschlüsselung der Abwesenheitsgründe je Schüler(in) – inkl. CSV-Export.
 - **Teams generieren**: Zufällige, optional geschlechterbalancierte Teams aus den anwesenden bzw. manuell hinzugefügten Personen erstellen, kopieren und neu mischen.
 
 ## Lokal öffnen
@@ -38,6 +39,9 @@ Die App besteht nur aus statischen Dateien (`index.html`, `style.css`, `app.js`)
 [
   {
     "name": "7a",
+    "schedule": [
+      { "weekday": 0, "time": "10:00" }
+    ],
     "students": [
       { "name": "Anna", "gender": "female" },
       { "name": "Max", "gender": "male" }
@@ -47,3 +51,4 @@ Die App besteht nur aus statischen Dateien (`index.html`, `style.css`, `app.js`)
 ```
 
 Gültige Werte für `gender`: `female`, `male`, `diverse`.
+Gültige Werte für `weekday`: `0` = Montag ... `6` = Sonntag. `schedule` ist optional.

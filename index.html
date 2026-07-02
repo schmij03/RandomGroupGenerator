@@ -27,6 +27,9 @@
         <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="attendance">
             <i class="fas fa-clipboard-check"></i><span class="hidden sm:inline">Anwesenheit</span>
         </button>
+        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="stats">
+            <i class="fas fa-chart-bar"></i><span class="hidden sm:inline">Auswertung</span>
+        </button>
         <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="teams">
             <i class="fas fa-users"></i><span class="hidden sm:inline">Teams</span>
         </button>
@@ -60,6 +63,13 @@
                         <button id="save-class-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md text-sm transition-colors">Speichern</button>
                         <button id="cancel-class-btn" class="text-gray-400 hover:text-gray-600 px-2 text-lg leading-none">&times;</button>
                     </div>
+                    <div class="mt-2">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Wochentag(e) &amp; Uhrzeit (optional)</label>
+                        <div id="new-class-schedule-rows" class="space-y-1.5"></div>
+                        <button id="new-class-schedule-add-btn" type="button" class="mt-1.5 text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
+                            <i class="fas fa-plus"></i> Termin hinzufügen
+                        </button>
+                    </div>
                     <p id="new-class-error" class="text-red-500 text-xs hidden mt-1"></p>
                 </div>
                 <ul id="class-list" class="space-y-2">
@@ -79,9 +89,25 @@
                     </div>
                 </div>
                 <div id="class-detail-panel" class="hidden">
-                    <div class="flex items-center justify-between mb-4 border-b pb-2">
+                    <div class="flex items-center justify-between mb-2 border-b pb-2">
                         <h2 class="text-lg font-semibold text-indigo-700" id="detail-class-name"></h2>
                         <span class="text-xs text-gray-400" id="detail-student-count"></span>
+                    </div>
+                    <div class="mb-3 p-2.5 bg-indigo-50 rounded-lg border border-indigo-100">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-medium text-indigo-700"><i class="fas fa-calendar-alt mr-1"></i>Wochenplan</span>
+                            <button id="edit-schedule-btn" class="text-xs text-indigo-500 hover:text-indigo-700"><i class="fas fa-pen"></i> Bearbeiten</button>
+                        </div>
+                        <div id="detail-schedule-display" class="flex flex-wrap gap-1.5"></div>
+                        <div id="detail-schedule-edit" class="hidden mt-1">
+                            <div id="detail-schedule-rows" class="space-y-1.5"></div>
+                            <div class="flex items-center gap-2 mt-1.5">
+                                <button id="detail-schedule-add-btn" type="button" class="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
+                                    <i class="fas fa-plus"></i> Termin hinzufügen
+                                </button>
+                                <button id="detail-schedule-save-btn" type="button" class="ml-auto text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-md">Speichern</button>
+                            </div>
+                        </div>
                     </div>
                     <form id="add-student-form" class="mb-3 space-y-2">
                         <div class="flex gap-2">
@@ -130,18 +156,26 @@
 
     <!-- TAB 2: ANWESENHEIT -->
     <div id="tab-attendance" class="hidden p-5 md:p-8">
-        <div class="mb-6">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Klasse auswählen</label>
-            <select id="attendance-class-select"
-                class="w-full md:w-72 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
-                <option value="">-- Klasse wählen --</option>
-            </select>
+        <div class="mb-6 flex flex-col sm:flex-row gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Klasse auswählen</label>
+                <select id="attendance-class-select"
+                    class="w-full sm:w-64 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
+                    <option value="">-- Klasse wählen --</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Datum</label>
+                <input type="date" id="attendance-date-input"
+                    class="w-full sm:w-48 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
+            </div>
         </div>
         <div id="attendance-empty" class="text-center text-gray-300 py-16">
             <i class="fas fa-clipboard-list text-5xl mb-3 block opacity-40"></i>
             <p class="text-sm">Wähle zuerst eine Klasse aus.</p>
         </div>
         <div id="attendance-content" class="hidden">
+            <p id="attendance-schedule-hint" class="hidden text-xs text-amber-600 mb-3"><i class="fas fa-info-circle mr-1"></i><span></span></p>
             <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div class="text-indigo-800">
                     <span class="text-2xl font-bold" id="present-count">0</span>
@@ -158,14 +192,60 @@
                     </button>
                 </div>
             </div>
-            <div id="attendance-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-8"></div>
-            <div class="border-t pt-5 text-center">
+            <div id="attendance-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-6"></div>
+            <div class="border-t pt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button id="save-attendance-btn"
+                    class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl shadow-md transition-colors inline-flex items-center gap-2 text-sm">
+                    <i class="fas fa-save"></i> Anwesenheit speichern
+                </button>
                 <button id="load-to-teams-btn"
-                    class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-xl shadow-md transition-colors inline-flex items-center gap-2 text-sm">
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-md transition-colors inline-flex items-center gap-2 text-sm">
                     <i class="fas fa-users"></i>
                     <span id="load-to-teams-label">Teams erstellen</span>
                 </button>
-                <p class="text-xs text-gray-400 mt-2">Wechselt zum Teams-Tab mit den anwesenden Schüler(innen)</p>
+            </div>
+            <p id="attendance-saved-msg" class="hidden text-xs text-emerald-600 text-center mt-2"><i class="fas fa-check-circle mr-1"></i>Anwesenheit für dieses Datum gespeichert.</p>
+
+            <div class="border-t mt-8 pt-5">
+                <h3 class="text-sm font-semibold text-gray-600 mb-2"><i class="fas fa-history mr-1"></i>Erfasste Termine</h3>
+                <ul id="attendance-sessions-list" class="space-y-1.5 text-sm"></ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: AUSWERTUNG -->
+    <div id="tab-stats" class="hidden p-5 md:p-8">
+        <div class="mb-6 flex flex-col sm:flex-row sm:items-end gap-4 justify-between">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Klasse auswählen</label>
+                <select id="stats-class-select"
+                    class="w-full sm:w-72 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
+                    <option value="">-- Klasse wählen --</option>
+                </select>
+            </div>
+            <button id="export-stats-btn" class="hidden text-sm bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-2 rounded-md flex items-center gap-2 transition-colors">
+                <i class="fas fa-file-csv"></i> Als CSV exportieren
+            </button>
+        </div>
+        <div id="stats-empty" class="text-center text-gray-300 py-16">
+            <i class="fas fa-chart-bar text-5xl mb-3 block opacity-40"></i>
+            <p class="text-sm">Wähle eine Klasse mit erfassten Terminen aus.</p>
+        </div>
+        <div id="stats-content" class="hidden">
+            <p class="text-sm text-gray-500 mb-4"><span id="stats-session-count" class="font-semibold text-gray-700">0</span> Termin(e) erfasst.</p>
+            <div class="overflow-x-auto border rounded-lg">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
+                        <tr>
+                            <th class="text-left px-3 py-2">Name</th>
+                            <th class="text-center px-3 py-2">Anwesend</th>
+                            <th class="text-center px-3 py-2">Abwesend</th>
+                            <th class="text-center px-3 py-2">Quote</th>
+                            <th class="text-left px-3 py-2">Gründe</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stats-table-body"></tbody>
+                </table>
             </div>
         </div>
     </div>
