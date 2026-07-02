@@ -12,6 +12,12 @@ const GENDER_ICONS = {
     male:    '<i class="fas fa-mars text-blue-500" title="Männlich"></i>',
     diverse: '<i class="fas fa-genderless text-purple-500" title="Divers"></i>'
 };
+// Nur diese drei Werte dürfen je in s.gender landen; alles andere fällt auf 'diverse' zurück,
+// damit GENDER_ICONS[gender] nie undefined in innerHTML schreibt.
+function sanitizeGender(g) { return (g === 'female' || g === 'male' || g === 'diverse') ? g : 'diverse'; }
+function genderIconEl(g) { const span = document.createElement('span'); span.innerHTML = GENDER_ICONS[sanitizeGender(g)]; return span; }
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^\d{2}:\d{2}$/;
 
 const WEEKDAYS = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 const WEEKDAYS_FULL = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
@@ -42,11 +48,33 @@ function saveAttendanceData() {
 function loadStorage() {
     try {
         const c = localStorage.getItem('tg2_classes');
-        if (c) { classes = JSON.parse(c); classIdCounter = parseInt(localStorage.getItem('tg2_classId')||'1',10); stuIdCounter = parseInt(localStorage.getItem('tg2_stuId')||'1',10); }
+        if (c) {
+            const parsed = JSON.parse(c);
+            if (Array.isArray(parsed)) {
+                classes = parsed;
+                classes.forEach(cls => {
+                    if (!Array.isArray(cls.students)) cls.students = [];
+                    if (!Array.isArray(cls.schedule)) cls.schedule = [];
+                    cls.students.forEach(s => { s.gender = sanitizeGender(s.gender); });
+                });
+                classIdCounter = parseInt(localStorage.getItem('tg2_classId')||'1',10) || 1;
+                stuIdCounter = parseInt(localStorage.getItem('tg2_stuId')||'1',10) || 1;
+            }
+        }
         const p = localStorage.getItem('tg2_persons');
-        if (p) { persons = JSON.parse(p); personIdCounter = parseInt(localStorage.getItem('tg2_personId')||'1',10); }
+        if (p) {
+            const parsed = JSON.parse(p);
+            if (Array.isArray(parsed)) {
+                persons = parsed;
+                persons.forEach(x => { x.gender = sanitizeGender(x.gender); });
+                personIdCounter = parseInt(localStorage.getItem('tg2_personId')||'1',10) || 1;
+            }
+        }
         const a = localStorage.getItem('tg2_attendance');
-        if (a) attendanceData = JSON.parse(a);
+        if (a) {
+            const parsed = JSON.parse(a);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) attendanceData = parsed;
+        }
     } catch(e) {}
 }
 
@@ -280,7 +308,7 @@ function renderStudentList(cls) {
         const li = document.createElement('li');
         li.className = 'flex items-center justify-between bg-white p-2 rounded-lg border border-gray-100 shadow-sm fade-in';
         const left = document.createElement('div'); left.className = 'flex items-center gap-2';
-        const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[s.gender];
+        const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[sanitizeGender(s.gender)];
         const nameSpan = document.createElement('span'); nameSpan.className = 'text-sm text-gray-700'; nameSpan.textContent = s.name;
         left.appendChild(icon); left.appendChild(nameSpan);
         const delBtn = document.createElement('button');
@@ -344,7 +372,7 @@ $importFileInput.addEventListener('change', () => {
                     let cls = classes.find(c => c.name.toLowerCase() === name.toLowerCase());
                     if (!cls) {
                         const schedule = Array.isArray(entry.schedule)
-                            ? entry.schedule.filter(e => e && Number.isInteger(e.weekday) && e.weekday >= 0 && e.weekday <= 6 && e.time).map(e => ({ weekday: e.weekday, time: e.time }))
+                            ? entry.schedule.filter(e => e && Number.isInteger(e.weekday) && e.weekday >= 0 && e.weekday <= 6 && typeof e.time === 'string' && TIME_RE.test(e.time)).map(e => ({ weekday: e.weekday, time: e.time }))
                             : [];
                         cls = { id: classIdCounter++, name, students: [], schedule }; classes.push(cls); imported++;
                     }
@@ -352,7 +380,7 @@ $importFileInput.addEventListener('change', () => {
                         const sName = (typeof s === 'string' ? s : s.name || '').trim();
                         if (!sName) return;
                         if (cls.students.find(st => st.name.toLowerCase() === sName.toLowerCase())) return;
-                        const gender = (typeof s === 'object' && s.gender) ? s.gender : 'female';
+                        const gender = (typeof s === 'object' && (s.gender === 'female' || s.gender === 'male' || s.gender === 'diverse')) ? s.gender : 'female';
                         cls.students.push({ id: stuIdCounter++, name: sName, gender });
                         importedStudents++;
                     });
@@ -479,7 +507,7 @@ function renderAttendanceGrid() {
         const checkbox = document.createElement('div');
         checkbox.className = `w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${present ? 'bg-green-500 border-green-500' : 'bg-red-400 border-red-400'}`;
         checkbox.innerHTML = present ? '<i class="fas fa-check text-white text-xs"></i>' : '<i class="fas fa-times text-white text-xs"></i>';
-        const iconSpan = document.createElement('span'); iconSpan.innerHTML = GENDER_ICONS[s.gender];
+        const iconSpan = document.createElement('span'); iconSpan.innerHTML = GENDER_ICONS[sanitizeGender(s.gender)];
         const nameSpan = document.createElement('span'); nameSpan.className = 'font-medium text-sm flex-1 truncate'; nameSpan.textContent = s.name;
         topRow.appendChild(checkbox); topRow.appendChild(iconSpan); topRow.appendChild(nameSpan);
         card.appendChild(topRow);
@@ -536,7 +564,11 @@ function renderAttendanceSessionsList(cls) {
         li.className = 'flex items-center justify-between bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-sm';
         const left = document.createElement('button');
         left.className = 'flex items-center gap-2 text-left hover:text-indigo-600 transition-colors';
-        left.innerHTML = `<span class="font-medium">${formatDateDisplay(session.date)}</span><span class="text-xs text-gray-400">${WEEKDAYS[session.weekday]}</span><span class="text-xs text-gray-400">· ${presentN}/${totalN} anwesend</span>`;
+        [[ 'font-medium', formatDateDisplay(session.date) ],
+         [ 'text-xs text-gray-400', WEEKDAYS[session.weekday] || '' ],
+         [ 'text-xs text-gray-400', `· ${presentN}/${totalN} anwesend` ]].forEach(([cls2, txt]) => {
+            const sp = document.createElement('span'); sp.className = cls2; sp.textContent = txt; left.appendChild(sp);
+        });
         left.addEventListener('click', () => { document.getElementById('attendance-date-input').value = session.date; loadAttendanceSession(); });
         const delBtn = document.createElement('button');
         delBtn.className = 'text-gray-300 hover:text-red-500 text-xs p-1';
@@ -598,6 +630,7 @@ function renderStats() {
     const statsRows = cls.students.map(s => {
         let present = 0, absent = 0;
         const reasonCounts = {};
+        const absences = [];
         sessions.forEach(session => {
             const rec = session.records[s.id];
             if (!rec) return;
@@ -606,11 +639,12 @@ function renderStats() {
                 absent++;
                 const key = rec.reasonCategory || 'Ohne Angabe';
                 reasonCounts[key] = (reasonCounts[key] || 0) + 1;
+                absences.push({ date: session.date, reasonCategory: rec.reasonCategory || '', note: rec.note || '' });
             }
         });
         const total = present + absent;
         const quote = total > 0 ? Math.round((present / total) * 100) : null;
-        return { student: s, present, absent, quote, reasonCounts };
+        return { student: s, present, absent, quote, reasonCounts, absences };
     });
 
     const tbody = document.getElementById('stats-table-body');
@@ -620,7 +654,11 @@ function renderStats() {
         tr.className = 'border-t border-gray-100';
         const nameTd = document.createElement('td');
         nameTd.className = 'px-3 py-2 flex items-center gap-2';
-        nameTd.innerHTML = `${GENDER_ICONS[row.student.gender]} <span class="font-medium">${row.student.name}</span>`;
+        nameTd.appendChild(genderIconEl(row.student.gender));
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'font-medium';
+        nameSpan.textContent = row.student.name;
+        nameTd.appendChild(nameSpan);
         const presentTd = document.createElement('td'); presentTd.className = 'text-center px-3 py-2 text-green-700'; presentTd.textContent = row.present;
         const absentTd = document.createElement('td'); absentTd.className = 'text-center px-3 py-2 text-red-600'; absentTd.textContent = row.absent;
         const quoteTd = document.createElement('td');
@@ -635,17 +673,57 @@ function renderStats() {
         reasonsTd.textContent = reasonEntries.length ? reasonEntries.map(([k, v]) => `${k}: ${v}`).join(', ') : '–';
         tr.appendChild(nameTd); tr.appendChild(presentTd); tr.appendChild(absentTd); tr.appendChild(quoteTd); tr.appendChild(reasonsTd);
         tbody.appendChild(tr);
+
+        if (row.absences.length > 0) {
+            tr.className += ' cursor-pointer hover:bg-gray-50';
+            tr.title = 'Klicken für Abwesenheits-Details';
+            const detailTr = document.createElement('tr');
+            detailTr.className = 'hidden bg-gray-50 border-t border-gray-100';
+            const detailTd = document.createElement('td');
+            detailTd.colSpan = 5;
+            detailTd.className = 'px-3 py-2';
+            const ul = document.createElement('ul');
+            ul.className = 'text-xs text-gray-600 space-y-1';
+            row.absences.forEach(a => {
+                const li = document.createElement('li');
+                li.className = 'flex items-center gap-2';
+                const dateSpan = document.createElement('span');
+                dateSpan.className = 'font-medium text-gray-700 w-20 flex-shrink-0';
+                dateSpan.textContent = formatDateDisplay(a.date);
+                const catSpan = document.createElement('span');
+                catSpan.className = 'px-1.5 py-0.5 rounded bg-red-50 text-red-700 flex-shrink-0';
+                catSpan.textContent = a.reasonCategory || 'Ohne Angabe';
+                li.appendChild(dateSpan); li.appendChild(catSpan);
+                if (a.note) {
+                    const noteSpan = document.createElement('span');
+                    noteSpan.className = 'text-gray-400 truncate';
+                    noteSpan.textContent = a.note;
+                    li.appendChild(noteSpan);
+                }
+                ul.appendChild(li);
+            });
+            detailTd.appendChild(ul);
+            detailTr.appendChild(detailTd);
+            tbody.appendChild(detailTr);
+            tr.addEventListener('click', () => detailTr.classList.toggle('hidden'));
+        }
     });
 
     exportBtn.onclick = () => exportStatsCsv(cls, statsRows, sessions.length);
 }
 
 function exportStatsCsv(cls, statsRows, sessionCount) {
-    const escapeCsv = v => `"${String(v).replace(/"/g, '""')}"`;
-    const lines = [['Name', 'Anwesend', 'Abwesend', 'Quote (%)', 'Gründe'].map(escapeCsv).join(';')];
+    // Führendes '='/'+'/'-'/'@' würde in Excel/LibreOffice als Formel ausgeführt (CSV-Injection).
+    const escapeCsv = v => {
+        let s = String(v).replace(/"/g, '""');
+        if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+        return `"${s}"`;
+    };
+    const lines = [['Name', 'Anwesend', 'Abwesend', 'Quote (%)', 'Gründe', 'Abwesenheits-Details'].map(escapeCsv).join(';')];
     statsRows.forEach(row => {
         const reasons = Object.entries(row.reasonCounts).map(([k, v]) => `${k}: ${v}`).join(', ');
-        lines.push([row.student.name, row.present, row.absent, row.quote === null ? '' : row.quote, reasons].map(escapeCsv).join(';'));
+        const details = (row.absences || []).map(a => `${formatDateDisplay(a.date)} ${a.reasonCategory || 'Ohne Angabe'}${a.note ? ` (${a.note})` : ''}`).join(' | ');
+        lines.push([row.student.name, row.present, row.absent, row.quote === null ? '' : row.quote, reasons, details].map(escapeCsv).join(';'));
     });
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -696,7 +774,7 @@ function renderPersonList() {
         const li = document.createElement('li');
         li.className = 'flex justify-between items-center bg-white p-2.5 rounded-lg shadow-sm border border-gray-100 fade-in';
         const inner = document.createElement('div'); inner.className = 'flex items-center gap-2';
-        const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[p.gender];
+        const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[sanitizeGender(p.gender)];
         const name = document.createElement('span'); name.className = 'text-sm font-medium text-gray-700'; name.textContent = p.name;
         inner.appendChild(icon); inner.appendChild(name);
         const btn = document.createElement('button');
@@ -797,7 +875,7 @@ function renderTeams(teams) {
         const ul = document.createElement('ul'); ul.className = 'p-4 flex-grow space-y-1.5';
         team.forEach(p => {
             const li = document.createElement('li'); li.className = 'flex items-center gap-2 py-1 border-b border-gray-50 last:border-0';
-            const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[p.gender];
+            const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[sanitizeGender(p.gender)];
             const name = document.createElement('span'); name.className = 'text-gray-700 text-sm'; name.textContent = p.name;
             li.appendChild(icon); li.appendChild(name); ul.appendChild(li);
         });
@@ -825,6 +903,109 @@ document.getElementById('copy-teams-btn').addEventListener('click', async () => 
     }
     setTimeout(() => { document.getElementById('copy-teams-btn').innerHTML = orig; }, 2000);
 });
+
+// KOMPLETT-BACKUP (Klassen + Wochenpläne + Anwesenheitsdaten)
+document.getElementById('backup-export-btn').addEventListener('click', () => {
+    const backup = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        classes, classIdCounter, stuIdCounter,
+        attendanceData
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `teamgenerator-backup-${todayStr()}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+});
+
+const $backupFileInput = document.getElementById('backup-file-input');
+document.getElementById('backup-import-btn').addEventListener('click', () => $backupFileInput.click());
+$backupFileInput.addEventListener('change', () => {
+    const file = $backupFileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const data = JSON.parse(reader.result);
+            const result = validateBackup(data);
+            if (!result) { alert('Ungültige Backup-Datei: Es wurde kein Komplett-Backup dieser App erkannt.'); return; }
+            if (!confirm(`Backup vom ${result.exportedAt ? formatDateDisplay(result.exportedAt.slice(0,10)) : 'unbekannten Datum'} mit ${result.classes.length} Klasse(n) wiederherstellen? Alle aktuellen Klassen und Anwesenheitsdaten werden ersetzt.`)) return;
+            classes = result.classes;
+            classIdCounter = result.classIdCounter;
+            stuIdCounter = result.stuIdCounter;
+            attendanceData = result.attendanceData;
+            activeClassId = null; selAttendClassId = null; currentSessionRecords = {};
+            saveClasses(); saveAttendanceData();
+            renderClassList(); renderClassDetail();
+            document.getElementById('attendance-class-select').value = '';
+            document.getElementById('attendance-empty').classList.remove('hidden');
+            document.getElementById('attendance-content').classList.add('hidden');
+            switchTab('classes');
+            alert(`Backup wiederhergestellt: ${result.classes.length} Klasse(n).`);
+        } catch (err) {
+            alert('Backup konnte nicht gelesen werden (kein gültiges JSON).');
+        }
+        $backupFileInput.value = '';
+    };
+    reader.readAsText(file);
+});
+
+// Prüft und normalisiert eine Backup-Datei; gibt null zurück, wenn die Struktur nicht passt.
+function validateBackup(data) {
+    if (!data || typeof data !== 'object' || !Array.isArray(data.classes)) return null;
+    const cleanClasses = [];
+    let maxClassId = 0, maxStuId = 0;
+    for (const cls of data.classes) {
+        if (!cls || typeof cls !== 'object') return null;
+        const id = Number.isInteger(cls.id) && cls.id > 0 ? cls.id : null;
+        const name = typeof cls.name === 'string' ? cls.name.trim() : '';
+        if (id === null || !name) return null;
+        const students = [];
+        for (const s of (Array.isArray(cls.students) ? cls.students : [])) {
+            if (!s || typeof s !== 'object' || !Number.isInteger(s.id) || typeof s.name !== 'string' || !s.name.trim()) continue;
+            students.push({ id: s.id, name: s.name.trim(), gender: sanitizeGender(s.gender) });
+            if (s.id > maxStuId) maxStuId = s.id;
+        }
+        const schedule = (Array.isArray(cls.schedule) ? cls.schedule : [])
+            .filter(e => e && Number.isInteger(e.weekday) && e.weekday >= 0 && e.weekday <= 6 && typeof e.time === 'string' && TIME_RE.test(e.time))
+            .map(e => ({ weekday: e.weekday, time: e.time }));
+        cleanClasses.push({ id, name, students, schedule });
+        if (id > maxClassId) maxClassId = id;
+    }
+    const cleanAttendance = {};
+    if (data.attendanceData && typeof data.attendanceData === 'object' && !Array.isArray(data.attendanceData)) {
+        for (const [classIdKey, sessions] of Object.entries(data.attendanceData)) {
+            if (!cleanClasses.find(c => String(c.id) === classIdKey)) continue;
+            if (!sessions || typeof sessions !== 'object' || Array.isArray(sessions)) continue;
+            const cleanSessions = {};
+            for (const [dateKey, session] of Object.entries(sessions)) {
+                if (!DATE_RE.test(dateKey) || !session || typeof session !== 'object') continue;
+                const records = {};
+                if (session.records && typeof session.records === 'object' && !Array.isArray(session.records)) {
+                    for (const [stuKey, rec] of Object.entries(session.records)) {
+                        if (!rec || typeof rec !== 'object') continue;
+                        records[stuKey] = {
+                            status: rec.status === 'absent' ? 'absent' : 'present',
+                            reasonCategory: REASON_CATEGORIES.includes(rec.reasonCategory) ? rec.reasonCategory : '',
+                            note: typeof rec.note === 'string' ? rec.note : ''
+                        };
+                    }
+                }
+                cleanSessions[dateKey] = { date: dateKey, weekday: getWeekdayIndex(dateKey), records };
+            }
+            if (Object.keys(cleanSessions).length) cleanAttendance[classIdKey] = cleanSessions;
+        }
+    }
+    return {
+        classes: cleanClasses,
+        classIdCounter: Math.max(Number.isInteger(data.classIdCounter) ? data.classIdCounter : 1, maxClassId + 1),
+        stuIdCounter: Math.max(Number.isInteger(data.stuIdCounter) ? data.stuIdCounter : 1, maxStuId + 1),
+        attendanceData: cleanAttendance,
+        exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : null
+    };
+}
 
 // INIT
 loadStorage(); renderClassList(); renderClassDetail(); renderPersonList(); switchTab('classes');

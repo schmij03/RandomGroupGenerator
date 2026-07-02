@@ -9,6 +9,15 @@ Eine reine Client-seitige WebApp (HTML/CSS/JavaScript, kein Server nötig) zum V
 - **Anwesenheitscheck**: Pro Klasse und Datum wird eine eigene Anwesenheits-Sitzung erfasst (mehrere Termine pro Klasse möglich, z.B. jede Woche). Bei Abwesenheit kann ein Grund angegeben werden (Kategorie: Krank / Entschuldigt / Unentschuldigt / Sonstiges, plus optionale Notiz). Passt das gewählte Datum nicht zum hinterlegten Wochenplan, wird ein Hinweis angezeigt. Erfasste Termine lassen sich in der Terminliste erneut öffnen, bearbeiten oder löschen.
 - **Auswertung**: Pro Klasse eine Übersicht mit Anwesenheits-/Abwesenheitszahlen, Anwesenheitsquote und Aufschlüsselung der Abwesenheitsgründe je Schüler(in) – inkl. CSV-Export.
 - **Teams generieren**: Zufällige, optional geschlechterbalancierte Teams aus den anwesenden bzw. manuell hinzugefügten Personen erstellen, kopieren und neu mischen.
+- **Komplett-Backup**: Über die Fusszeile lassen sich alle Daten (Klassen, Wochenpläne, Anwesenheitsdaten) als JSON sichern und auf einem anderen Gerät/Browser wiederherstellen.
+
+## Sicherheit
+
+- Alle Namen, Notizen und importierten Daten werden ausschliesslich als Text ins DOM eingefügt (kein HTML-Injection/XSS über Schülernamen o.ä. möglich).
+- Importierte Dateien (Klassen-Import und Backup-Wiederherstellung) werden strikt validiert; ungültige Werte werden verworfen oder normalisiert.
+- CSV-Exporte sind gegen Formel-Injection abgesichert (führende `=`, `+`, `-`, `@` werden neutralisiert).
+- Eine Content-Security-Policy beschränkt Skripte und Styles auf die App selbst und die beiden verwendeten CDNs.
+- Es werden keine Daten an einen Server gesendet – alles bleibt im `localStorage` des Browsers.
 
 ## Lokal öffnen
 
