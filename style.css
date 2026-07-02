@@ -1,0 +1,9 @@
+body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+.fade-in { animation: fadeIn 0.3s ease-in-out; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+.team-card { transition: transform 0.2s, box-shadow 0.2s; }
+.team-card:hover { transform: translateY(-2px); box-shadow: 0 10px 20px -4px rgba(0,0,0,0.12); }
+.tab-btn { border-bottom: 2px solid transparent; transition: all 0.2s; }
+.tab-btn.active { background: white; color: #4f46e5; border-bottom-color: #4f46e5; font-weight: 600; }
+.tab-btn:not(.active):hover { background: rgba(255,255,255,0.5); }
+.attendance-card { transition: all 0.15s; }
