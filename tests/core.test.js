@@ -203,7 +203,8 @@ const validBackup = () => ({
         '1': { '2026-06-29': { date: '2026-06-29', weekday: 0, records: { '1': { status: 'present', reasonCategory: '', note: '' }, '2': { status: 'absent', reasonCategory: 'Krank', note: 'Grippe' } } } }
     },
     persons: [{ id: 5, name: 'Gast', gender: 'diverse', sporty: false }],
-    personIdCounter: 6
+    personIdCounter: 6,
+    apartPairs: [['Anna', 'Max']]
 });
 
 test('validateBackup: gültiges Backup inkl. persons und formerStudents', () => {
@@ -218,12 +219,20 @@ test('validateBackup: gültiges Backup inkl. persons und formerStudents', () => 
 
 test('validateBackup: Version-1-Backup ohne persons bleibt gültig', () => {
     const b = validBackup();
-    delete b.persons; delete b.personIdCounter;
+    delete b.persons; delete b.personIdCounter; delete b.apartPairs;
     b.classes[0] = { id: 1, name: '7a', students: b.classes[0].students, schedule: [] };
     const res = TG.validateBackup(b);
     assert.ok(res);
     assert.deepEqual(res.persons, []);
+    assert.deepEqual(res.apartPairs, []);
     assert.deepEqual(res.classes[0].formerStudents, []);
+});
+
+test('validateBackup: apartPairs werden übernommen und bereinigt', () => {
+    const b = validBackup();
+    b.apartPairs = [['Anna', 'Max'], ['nur-einer'], [1, 2], ['', 'Leer'], ['Kim', 'Lea']];
+    const res = TG.validateBackup(b);
+    assert.deepEqual(res.apartPairs, [['Anna', 'Max'], ['Kim', 'Lea']]);
 });
 
 test('validateBackup: lehnt kaputte Strukturen ab', () => {

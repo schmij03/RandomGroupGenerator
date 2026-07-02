@@ -40,15 +40,19 @@ document.getElementById('storage-warning-close').addEventListener('click', () =>
 
 function saveClasses() {
     try { localStorage.setItem('tg2_classes', JSON.stringify(classes)); localStorage.setItem('tg2_classId', String(classIdCounter)); localStorage.setItem('tg2_stuId', String(stuIdCounter)); } catch(e) { storageWarn(); }
+    scheduleDataFileWrite();
 }
 function savePersons() {
     try { localStorage.setItem('tg2_persons', JSON.stringify(persons)); localStorage.setItem('tg2_personId', String(personIdCounter)); localStorage.setItem('tg2_personsManual', personsManual ? '1' : '0'); } catch(e) { storageWarn(); }
+    scheduleDataFileWrite();
 }
 function saveAttendanceData() {
     try { localStorage.setItem('tg2_attendance', JSON.stringify(attendanceData)); } catch(e) { storageWarn(); }
+    scheduleDataFileWrite();
 }
 function saveApartPairs() {
     try { localStorage.setItem('tg2_apart', JSON.stringify(apartPairs)); } catch(e) { storageWarn(); }
+    scheduleDataFileWrite();
 }
 function loadStorage() {
     try {
@@ -1281,14 +1285,20 @@ async function decryptBackup(payload, password) {
     return JSON.parse(new TextDecoder().decode(plain));
 }
 
-document.getElementById('backup-export-btn').addEventListener('click', async () => {
-    const backup = {
+// Serialisiert den kompletten App-Zustand (auch für die lokale Datendatei genutzt).
+function buildBackupObject() {
+    return {
         version: 2,
         exportedAt: new Date().toISOString(),
         classes, classIdCounter, stuIdCounter,
         attendanceData,
-        persons, personIdCounter
+        persons, personIdCounter,
+        apartPairs
     };
+}
+
+document.getElementById('backup-export-btn').addEventListener('click', async () => {
+    const backup = buildBackupObject();
     let payload = backup;
     if (window.crypto && crypto.subtle) {
         const pw = await uiPrompt('Optional: Passwort zum Verschlüsseln des Backups. Leer lassen für unverschlüsselt.', {
@@ -1324,20 +1334,7 @@ $backupFileInput.addEventListener('change', () => {
             if (!result) { await uiAlert('Ungültige Backup-Datei: Es wurde kein Komplett-Backup dieser App erkannt.'); return; }
             const ok = await uiConfirm(`Backup vom ${result.exportedAt ? formatDateDisplay(result.exportedAt.slice(0,10)) : 'unbekannten Datum'} mit ${result.classes.length} Klasse(n) wiederherstellen? Alle aktuellen Klassen und Anwesenheitsdaten werden ersetzt.`, { title: 'Backup wiederherstellen', okLabel: 'Wiederherstellen', danger: true });
             if (!ok) return;
-            classes = result.classes;
-            classIdCounter = result.classIdCounter;
-            stuIdCounter = result.stuIdCounter;
-            attendanceData = result.attendanceData;
-            persons = result.persons;
-            personIdCounter = result.personIdCounter;
-            personsManual = false;
-            activeClassId = null; selAttendClassId = null; currentSessionRecords = {};
-            attendanceDirty = false; updateDirtyHint();
-            saveClasses(); saveAttendanceData(); savePersons();
-            renderClassList(); renderClassDetail(); renderPersonList();
-            $attendanceSelect.value = '';
-            document.getElementById('attendance-empty').classList.remove('hidden');
-            document.getElementById('attendance-content').classList.add('hidden');
+            applyRestoredData(result);
             switchTab('classes');
             await uiAlert(`Backup wiederhergestellt: ${result.classes.length} Klasse(n).`);
         } catch (err) {
@@ -1348,6 +1345,188 @@ $backupFileInput.addEventListener('change', () => {
     reader.readAsText(file);
 });
 
+// Übernimmt validierte Daten (aus Backup-Import oder Datendatei) als neuen App-Zustand.
+function applyRestoredData(result) {
+    classes = result.classes;
+    classIdCounter = result.classIdCounter;
+    stuIdCounter = result.stuIdCounter;
+    attendanceData = result.attendanceData;
+    persons = result.persons;
+    personIdCounter = result.personIdCounter;
+    apartPairs = result.apartPairs || [];
+    personsManual = false;
+    activeClassId = null; selAttendClassId = null; currentSessionRecords = {};
+    attendanceDirty = false; updateDirtyHint();
+    saveClasses(); saveAttendanceData(); savePersons(); saveApartPairs();
+    renderClassList(); renderClassDetail(); renderPersonList();
+    $attendanceSelect.value = '';
+    document.getElementById('attendance-empty').classList.remove('hidden');
+    document.getElementById('attendance-content').classList.add('hidden');
+    refreshStatsSelect();
+}
+
+// LOKALE DATENDATEI (File System Access API — Chrome/Edge)
+// Speichert alle Daten zusätzlich automatisch in eine JSON-Datei auf der Festplatte.
+// Das Datei-Handle wird in IndexedDB gemerkt, damit die Verbindung Neustarts überlebt.
+const DATA_FILE_IDB = 'tg2_filestore';
+const DATA_FILE_KEY = 'dataFile';
+let dataFileHandle = null, fileStorageActive = false, fileWriteTimer = null, fileWriteErrorShown = false;
+
+function fsSupported() { return 'showSaveFilePicker' in window && window.isSecureContext && 'indexedDB' in window; }
+
+function idbOpen() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DATA_FILE_IDB, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('handles');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+async function idbSet(key, val) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').put(val, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+async function idbGet(key) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+        const req = db.transaction('handles', 'readonly').objectStore('handles').get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+async function idbDel(key) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+function setFileStatus(state, detail = '') {
+    const row = document.getElementById('file-storage-row');
+    if (!fsSupported()) { row.classList.add('hidden'); return; }
+    row.classList.remove('hidden');
+    const text = document.getElementById('file-storage-status-text');
+    document.getElementById('file-storage-connect-btn').classList.toggle('hidden', state !== 'disconnected');
+    document.getElementById('file-storage-reconnect-btn').classList.toggle('hidden', state !== 'needs-permission');
+    document.getElementById('file-storage-disconnect-btn').classList.toggle('hidden', state === 'disconnected');
+    text.classList.toggle('text-amber-600', state === 'needs-permission' || state === 'error');
+    if (state === 'disconnected') text.textContent = 'Optional: Alle Daten zusätzlich automatisch in eine lokale Datei sichern (z.B. im Dokumente-Ordner).';
+    else if (state === 'connected') text.textContent = `Daten werden automatisch gespeichert in: ${detail}`;
+    else if (state === 'needs-permission') text.textContent = `Datendatei "${detail}" verbunden — Zugriff bestätigen, um weiter automatisch zu speichern.`;
+    else if (state === 'error') text.textContent = detail;
+}
+
+function scheduleDataFileWrite() {
+    if (!fileStorageActive || !dataFileHandle) return;
+    clearTimeout(fileWriteTimer);
+    fileWriteTimer = setTimeout(() => { fileWriteTimer = null; writeDataFile(); }, 400);
+}
+async function writeDataFile() {
+    if (!fileStorageActive || !dataFileHandle) return;
+    try {
+        const writable = await dataFileHandle.createWritable();
+        await writable.write(JSON.stringify(buildBackupObject(), null, 2));
+        await writable.close();
+        fileWriteErrorShown = false;
+        setFileStatus('connected', dataFileHandle.name);
+    } catch (e) {
+        setFileStatus('error', `Schreiben in "${dataFileHandle.name}" fehlgeschlagen — Daten sind weiterhin im Browser gespeichert.`);
+        if (!fileWriteErrorShown) { fileWriteErrorShown = true; showToast('Datendatei konnte nicht geschrieben werden.'); }
+    }
+}
+// Ausstehende Schreibvorgänge beim Verlassen der Seite noch anstossen.
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && fileWriteTimer) { clearTimeout(fileWriteTimer); fileWriteTimer = null; writeDataFile(); }
+});
+
+// Gleicht Browser-Stand und Datei ab: identisch → nichts tun; Datei leer/ungültig →
+// (nach Rückfrage) überschreiben; unterschiedlich → Nutzer entscheidet, welche Seite gilt.
+async function syncWithDataFile() {
+    let text;
+    try { text = await (await dataFileHandle.getFile()).text(); }
+    catch (e) { setFileStatus('error', `Datendatei "${dataFileHandle.name}" konnte nicht gelesen werden.`); return; }
+    if (!text.trim()) { await writeDataFile(); return; }
+    let result = null;
+    try {
+        const data = JSON.parse(text);
+        if (data && data.encrypted === true) {
+            await uiAlert('Die gewählte Datei ist ein verschlüsseltes Backup. Als automatische Datendatei bitte eine unverschlüsselte Datei verwenden (oder eine neue anlegen).');
+            await disconnectDataFile();
+            return;
+        }
+        result = validateBackup(data);
+    } catch (e) {}
+    if (!result) {
+        const ok = await uiConfirm(`Die Datei "${dataFileHandle.name}" enthält keine gültigen Team-Generator-Daten. Mit dem aktuellen Stand überschreiben?`, { title: 'Datendatei', okLabel: 'Überschreiben', danger: true });
+        if (ok) await writeDataFile();
+        else await disconnectDataFile();
+        return;
+    }
+    const localSnap = JSON.stringify({ c: classes, a: attendanceData, p: persons, x: apartPairs });
+    const fileSnap = JSON.stringify({ c: result.classes, a: result.attendanceData, p: result.persons, x: result.apartPairs });
+    if (localSnap === fileSnap) { setFileStatus('connected', dataFileHandle.name); return; }
+    const loadIt = await uiConfirm(
+        `Die Datendatei "${dataFileHandle.name}"${result.exportedAt ? ` (Stand ${formatDateDisplay(result.exportedAt.slice(0, 10))})` : ''} unterscheidet sich vom Stand in diesem Browser.\n\n"Aus Datei laden" ersetzt den Browser-Stand. "Browser-Stand behalten" überschreibt die Datei.`,
+        { title: 'Datendatei', okLabel: 'Aus Datei laden', cancelLabel: 'Browser-Stand behalten' }
+    );
+    if (loadIt) { applyRestoredData(result); switchTab('classes'); }
+    else await writeDataFile();
+    setFileStatus('connected', dataFileHandle.name);
+}
+
+async function connectDataFile() {
+    let handle;
+    try {
+        handle = await window.showSaveFilePicker({
+            suggestedName: 'teamgenerator-daten.json',
+            types: [{ description: 'JSON-Datei', accept: { 'application/json': ['.json'] } }]
+        });
+    } catch (e) { return; } // abgebrochen
+    dataFileHandle = handle;
+    fileStorageActive = true;
+    try { await idbSet(DATA_FILE_KEY, handle); } catch (e) {}
+    await syncWithDataFile();
+}
+async function disconnectDataFile() {
+    fileStorageActive = false;
+    dataFileHandle = null;
+    clearTimeout(fileWriteTimer); fileWriteTimer = null;
+    try { await idbDel(DATA_FILE_KEY); } catch (e) {}
+    setFileStatus('disconnected');
+}
+async function reconnectDataFile() {
+    if (!dataFileHandle) return;
+    let perm = 'denied';
+    try { perm = await dataFileHandle.requestPermission({ mode: 'readwrite' }); } catch (e) {}
+    if (perm !== 'granted') { setFileStatus('needs-permission', dataFileHandle.name); return; }
+    fileStorageActive = true;
+    await syncWithDataFile();
+}
+async function initDataFile() {
+    if (!fsSupported()) return;
+    setFileStatus('disconnected');
+    try { dataFileHandle = (await idbGet(DATA_FILE_KEY)) || null; } catch (e) { dataFileHandle = null; }
+    if (!dataFileHandle) return;
+    let perm = 'prompt';
+    try { perm = await dataFileHandle.queryPermission({ mode: 'readwrite' }); } catch (e) {}
+    if (perm === 'granted') { fileStorageActive = true; await syncWithDataFile(); }
+    else setFileStatus('needs-permission', dataFileHandle.name);
+}
+document.getElementById('file-storage-connect-btn').addEventListener('click', connectDataFile);
+document.getElementById('file-storage-reconnect-btn').addEventListener('click', reconnectDataFile);
+document.getElementById('file-storage-disconnect-btn').addEventListener('click', async () => {
+    await disconnectDataFile();
+    showToast('Datendatei getrennt — Daten bleiben im Browser gespeichert.');
+});
+
 // SERVICE WORKER (offline-fähig; nur unter https/localhost möglich)
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
     window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => {}); });
@@ -1355,3 +1534,4 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 
 // INIT
 loadStorage(); renderClassList(); renderClassDetail(); renderPersonList(); switchTab('classes');
+initDataFile();
