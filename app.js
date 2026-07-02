@@ -30,6 +30,11 @@ function todayStr() {
 function getWeekdayIndex(dateStr) {
     return (new Date(dateStr + 'T00:00:00').getDay() + 6) % 7;
 }
+// Schweizer Schuljahr: Semester 1 = August–Januar, Semester 2 = Februar–Juli.
+function getSemester(dateStr) {
+    const month = parseInt(dateStr.slice(5, 7), 10);
+    return (month >= 8 || month === 1) ? 1 : 2;
+}
 function formatDateDisplay(dateStr) {
     const [y, m, d] = dateStr.split('-');
     return `${d}.${m}.${y}`;
@@ -583,6 +588,7 @@ function renderAttendanceSessionsList(cls) {
         left.className = 'flex items-center gap-2 text-left hover:text-indigo-600 transition-colors';
         [[ 'font-medium', formatDateDisplay(session.date) ],
          [ 'text-xs text-gray-400', WEEKDAYS[session.weekday] || '' ],
+         [ 'text-xs bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full', `Sem. ${getSemester(session.date)}` ],
          [ 'text-xs text-gray-400', `· ${presentN}/${totalN} anwesend` ]].forEach(([cls2, txt]) => {
             const sp = document.createElement('span'); sp.className = cls2; sp.textContent = txt; left.appendChild(sp);
         });
@@ -629,14 +635,17 @@ function refreshStatsSelect() {
 }
 
 document.getElementById('stats-class-select').addEventListener('change', renderStats);
+document.getElementById('stats-semester-select').addEventListener('change', renderStats);
 
 function renderStats() {
     const id = parseInt(document.getElementById('stats-class-select').value, 10);
+    const semesterFilter = document.getElementById('stats-semester-select').value; // 'all' | '1' | '2'
     const emptyEl = document.getElementById('stats-empty');
     const contentEl = document.getElementById('stats-content');
     const exportBtn = document.getElementById('export-stats-btn');
     const cls = classes.find(c => c.id === id);
-    const sessions = cls && attendanceData[cls.id] ? Object.values(attendanceData[cls.id]).sort((a, b) => a.date.localeCompare(b.date)) : [];
+    let sessions = cls && attendanceData[cls.id] ? Object.values(attendanceData[cls.id]).sort((a, b) => a.date.localeCompare(b.date)) : [];
+    if (semesterFilter !== 'all') sessions = sessions.filter(session => getSemester(session.date) === parseInt(semesterFilter, 10));
     if (!cls || sessions.length === 0) {
         emptyEl.classList.remove('hidden'); contentEl.classList.add('hidden'); exportBtn.classList.add('hidden');
         return;
@@ -726,10 +735,10 @@ function renderStats() {
         }
     });
 
-    exportBtn.onclick = () => exportStatsCsv(cls, statsRows, sessions.length);
+    exportBtn.onclick = () => exportStatsCsv(cls, statsRows, sessions.length, semesterFilter);
 }
 
-function exportStatsCsv(cls, statsRows, sessionCount) {
+function exportStatsCsv(cls, statsRows, sessionCount, semesterFilter) {
     // Führendes '='/'+'/'-'/'@' würde in Excel/LibreOffice als Formel ausgeführt (CSV-Injection).
     const escapeCsv = v => {
         let s = String(v).replace(/"/g, '""');
@@ -744,8 +753,9 @@ function exportStatsCsv(cls, statsRows, sessionCount) {
     });
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
+    const semesterSuffix = semesterFilter === '1' ? '-Semester1' : semesterFilter === '2' ? '-Semester2' : '';
     const a = document.createElement('a');
-    a.href = url; a.download = `anwesenheit-${cls.name}-${todayStr()}.csv`;
+    a.href = url; a.download = `anwesenheit-${cls.name}${semesterSuffix}-${todayStr()}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
