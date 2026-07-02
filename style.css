@@ -1,3 +1,10 @@
+/* Selbst gehostete Inter-Schrift (kein Google-Fonts-Request, DSGVO-freundlich & offline-fähig) */
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; font-display: swap; src: url('vendor/fonts/inter-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 500; font-display: swap; src: url('vendor/fonts/inter-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 600; font-display: swap; src: url('vendor/fonts/inter-latin-600-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 700; font-display: swap; src: url('vendor/fonts/inter-latin-700-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 800; font-display: swap; src: url('vendor/fonts/inter-latin-800-normal.woff2') format('woff2'); }
+
 body {
     font-family: 'Inter', system-ui, sans-serif;
     background: linear-gradient(160deg, #eef2ff 0%, #f5f3ff 45%, #ecfeff 100%);
@@ -38,3 +45,20 @@ button:active { transform: scale(0.97); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #a5b4fc; }
+
+/* Druckansicht: nur die generierten Teams ausgeben */
+@media print {
+    body { background: white; padding: 0; }
+    body * { visibility: hidden; }
+    #results-section, #results-section * { visibility: visible; }
+    #results-section .no-print, #results-section .no-print * { visibility: hidden; display: none; }
+    #results-section {
+        position: absolute; left: 0; top: 0; width: 100%;
+        background: white; border: none; padding: 1cm;
+    }
+    .team-card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+    .team-card > div:first-child {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}
