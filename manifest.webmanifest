@@ -1,7 +1,7 @@
 {
-    "name": "Team Generator",
-    "short_name": "Teams",
-    "description": "Klassen verwalten, Anwesenheit erfassen und zufällige Teams generieren — alles lokal im Browser.",
+    "name": "Klassenmanager",
+    "short_name": "Klassen",
+    "description": "Klassen verwalten, Anwesenheit mit Gründen erfassen, auswerten und faire Zufallsteams generieren — alles lokal im Browser.",
     "lang": "de",
     "start_url": ".",
     "scope": ".",

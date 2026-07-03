@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Team Generator</title>
-    <meta name="description" content="Klassen verwalten, Anwesenheit erfassen und zufällige Teams generieren.">
+    <title>Klassenmanager</title>
+    <meta name="description" content="Klassen verwalten, Anwesenheit mit Gründen erfassen, auswerten und faire Zufallsteams generieren.">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
     <meta name="referrer" content="no-referrer">
     <meta name="theme-color" content="#4f46e5">
@@ -23,9 +23,9 @@
     <div class="app-header text-white px-6 py-8 text-center relative overflow-hidden no-print">
         <div class="relative z-10">
             <h1 class="text-3xl md:text-4xl font-extrabold mb-1.5 tracking-tight">
-                <i class="fas fa-people-group mr-2 opacity-80" aria-hidden="true"></i>Team Generator
+                <i class="fas fa-people-group mr-2 opacity-80" aria-hidden="true"></i>Klassenmanager
             </h1>
-            <p class="text-indigo-100/90 text-sm">Klassen verwalten · Anwesenheit erfassen · Teams bilden</p>
+            <p class="text-indigo-100/90 text-sm">Klassen verwalten · Anwesenheit erfassen · Auswerten · Teams bilden</p>
         </div>
         <div class="header-blob header-blob-1"></div>
         <div class="header-blob header-blob-2"></div>
@@ -170,7 +170,7 @@
                             <i class="fas fa-list" aria-hidden="true"></i> Mehrere auf einmal hinzufügen
                         </button>
                         <div id="class-bulk-area" class="hidden mt-2 p-3 bg-gray-50 rounded-lg border text-sm">
-                            <p class="text-xs text-gray-500 mb-1">Format: <code class="bg-gray-200 px-1 rounded">Anna w, Max ms, Kim d</code> &nbsp;(<code class="bg-gray-200 px-1 rounded">s</code> = sportlich)</p>
+                            <p class="text-xs text-gray-500 mb-1">Format: <code class="bg-gray-200 px-1 rounded">Anna w, Max ms, Kim d</code> &nbsp;(<code class="bg-gray-200 px-1 rounded">s</code> = sportlich, auch <code class="bg-gray-200 px-1 rounded">Max m (s)</code>)</p>
                             <p class="text-xs text-amber-600 mb-2"><i class="fas fa-info-circle mr-1" aria-hidden="true"></i>Ohne Angabe = weiblich, nicht sportlich. Kürzel klein schreiben — Grossbuchstaben zählen zum Namen (z.B. "Anna M").</p>
                             <textarea id="class-bulk-input" rows="3" placeholder="Anna w&#10;Max m&#10;Kim d" aria-label="Mehrere Schüler(innen), eine pro Zeile"
                                 class="w-full border rounded p-2 text-xs font-mono focus:border-indigo-500 focus:outline-none"></textarea>
@@ -249,7 +249,26 @@
             <p id="attendance-saved-msg" class="hidden text-xs text-emerald-600 text-center mt-2" role="status"><i class="fas fa-check-circle mr-1" aria-hidden="true"></i>Anwesenheit für dieses Datum gespeichert.</p>
 
             <div class="border-t mt-8 pt-5">
-                <h3 class="text-sm font-semibold text-gray-600 mb-2"><i class="fas fa-history mr-1" aria-hidden="true"></i>Erfasste Termine</h3>
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-semibold text-gray-600"><i class="fas fa-history mr-1" aria-hidden="true"></i>Erfasste Termine</h3>
+                    <div class="flex items-center gap-1">
+                        <button id="attendance-import-help-btn" class="text-xs text-gray-400 hover:text-indigo-600 p-1.5 rounded-md transition-colors" title="Format für den Termin-Import anzeigen" aria-label="Format für den Termin-Import anzeigen">
+                            <i class="fas fa-circle-question" aria-hidden="true"></i>
+                        </button>
+                        <button id="attendance-import-btn" class="text-xs text-gray-400 hover:text-indigo-600 px-2 py-1.5 rounded-md flex items-center gap-1 transition-colors" title="Vergangene Termine aus CSV-Datei (Excel) importieren">
+                            <i class="fas fa-file-upload" aria-hidden="true"></i> Termine importieren
+                        </button>
+                        <input type="file" id="attendance-import-input" accept=".csv,.txt" class="hidden">
+                    </div>
+                </div>
+                <div id="attendance-import-help" class="hidden mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200 text-xs text-gray-600 space-y-2">
+                    <p class="font-medium text-gray-700"><i class="fas fa-file-csv mr-1" aria-hidden="true"></i>CSV — eine Zeile pro Schüler(in) und Termin (in Excel: Datei → Speichern unter → CSV):</p>
+                    <pre class="bg-white border rounded p-2 overflow-x-auto">Datum;Name;Status;Grund;Notiz
+15.09.2025;Anna;anwesend;;
+15.09.2025;Max;abwesend;Krank;Grippe
+22.09.2025;Anna;abwesend;Verletzt;</pre>
+                    <p class="text-gray-400">Datum: <code class="bg-gray-200 px-1 rounded">TT.MM.JJJJ</code> oder <code class="bg-gray-200 px-1 rounded">JJJJ-MM-TT</code>. Status: <code class="bg-gray-200 px-1 rounded">anwesend</code>/<code class="bg-gray-200 px-1 rounded">abwesend</code> (auch ja/nein, 1/0, x = anwesend). Grund optional: Krank, Verletzt, Entschuldigt, Unentschuldigt, Sonstiges — anderer Text landet in der Notiz. Die Namen müssen den Schülernamen der gewählten Klasse entsprechen.</p>
+                </div>
                 <ul id="attendance-sessions-list" class="space-y-1.5 text-sm"></ul>
             </div>
         </div>
