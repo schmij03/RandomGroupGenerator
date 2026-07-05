@@ -65,6 +65,30 @@ test('bulkParse: Klammer-Tags sind case-insensitiv', () => {
     ]);
 });
 
+test('bulkParse: getrennte Gender- und Sport-Tags ("Max m (s)")', () => {
+    const { out } = collect('Max m (s)\nAnna w (s)\nTim m s\nEva (m) (s)\nBen s m');
+    assert.deepEqual(out, [
+        { name: 'Max', gender: 'male', sporty: true },
+        { name: 'Anna', gender: 'female', sporty: true },
+        { name: 'Tim', gender: 'male', sporty: true },
+        { name: 'Eva', gender: 'male', sporty: true },
+        { name: 'Ben', gender: 'male', sporty: true }
+    ]);
+});
+
+test('bulkParse: doppelter Gender-Tag — zweites Token bleibt Namensbestandteil', () => {
+    const { out } = collect('Anna w w');
+    assert.deepEqual(out, [{ name: 'Anna w', gender: 'female', sporty: false }]);
+});
+
+test('bulkParse: Initial vor Tag bleibt erhalten ("Anna M w")', () => {
+    const { out } = collect('Anna M w\nMia S s');
+    assert.deepEqual(out, [
+        { name: 'Anna M', gender: 'female', sporty: false },
+        { name: 'Mia S', gender: 'female', sporty: true }
+    ]);
+});
+
 test('bulkParse: zählt Duplikate als übersprungen', () => {
     const seen = new Set();
     const res = TG.bulkParse('Anna w, Anna w, Max m', name => {
@@ -73,6 +97,35 @@ test('bulkParse: zählt Duplikate als übersprungen', () => {
     });
     assert.equal(res.added, 2);
     assert.equal(res.skipped, 1);
+});
+
+// --- parseAttendanceCsv ---
+test('parseAttendanceCsv: beide Datumsformate, Kopfzeile, Gründe und Notizen', () => {
+    const { rows, invalid } = TG.parseAttendanceCsv(
+        'Datum;Name;Status;Grund;Notiz\n' +
+        '15.09.2025;Anna;anwesend;;\n' +
+        '2025-09-15;Max;abwesend;Krank;Grippe\n' +
+        '22.09.2025;Anna;abwesend;verletzt;\n' +
+        '22.09.2025;Kim;abwesend;Zahnarzt;\n' +
+        'kein-datum;Ben;anwesend;;'
+    );
+    assert.equal(invalid.length, 1);
+    assert.deepEqual(rows, [
+        { date: '2025-09-15', name: 'Anna', status: 'present', reasonCategory: '', note: '' },
+        { date: '2025-09-15', name: 'Max', status: 'absent', reasonCategory: 'Krank', note: 'Grippe' },
+        { date: '2025-09-22', name: 'Anna', status: 'absent', reasonCategory: 'Verletzt', note: '' },
+        { date: '2025-09-22', name: 'Kim', status: 'absent', reasonCategory: '', note: 'Zahnarzt' }
+    ]);
+});
+
+test('parseAttendanceCsv: Status-Synonyme und ungültiger Status', () => {
+    const { rows, invalid } = TG.parseAttendanceCsv(
+        '01.09.2025;Anna;x;;\n01.09.2025;Max;0;;\n01.09.2025;Kim;vielleicht;;'
+    );
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].status, 'present');
+    assert.equal(rows[1].status, 'absent');
+    assert.equal(invalid.length, 1);
 });
 
 // --- parseCsvImport ---

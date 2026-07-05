@@ -1,7 +1,7 @@
 // Service Worker: macht die App offline-fähig.
 // Strategie: network-first mit Cache-Fallback — Updates kommen sofort an,
 // ohne Netz (z.B. Turnhalle) läuft die zuletzt geladene Version weiter.
-const CACHE_NAME = 'teamgenerator-v1';
+const CACHE_NAME = 'klassenmanager-v2';
 const ASSETS = [
     './',
     './index.html',

@@ -2,7 +2,7 @@
 const {
     WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES, TIME_RE,
     sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
-    bulkParse, parseCsvImport, escapeCsv,
+    bulkParse, parseCsvImport, parseAttendanceCsv, escapeCsv,
     distributeTeams, enforceApart, validateBackup
 } = window.TG;
 
@@ -284,11 +284,14 @@ function doCreateClass() {
     if (!name) return;
     if (classes.find(c => c.name.toLowerCase() === name.toLowerCase())) { $newClassErr.textContent = `Eine Klasse "${name}" existiert bereits.`; $newClassErr.classList.remove('hidden'); return; }
     const schedule = readScheduleRows($newClassScheduleRows);
-    classes.push({ id: classIdCounter++, name, students: [], formerStudents: [], schedule });
+    const newId = classIdCounter++;
+    classes.push({ id: newId, name, students: [], formerStudents: [], schedule });
     saveClasses();
-    $newClassForm.classList.add('hidden'); resetNewClassForm();
-    renderClassList();
-    selectClass(classes[classes.length - 1].id);
+    // Frischer Start nach dem Anlegen, damit alle Auswahllisten (Anwesenheit,
+    // Auswertung, Teams) die neue Klasse sicher kennen; die neue Klasse wird
+    // nach dem Reload wieder ausgewählt.
+    try { sessionStorage.setItem('tg2_selectClassAfterReload', String(newId)); } catch (e) {}
+    flushAndReload();
 }
 
 function renderClassList() {
@@ -578,8 +581,9 @@ $importFileInput.addEventListener('change', () => {
                     importedStudents++;
                 });
             }
-            saveClasses(); renderClassList(); renderClassDetail();
-            await uiAlert(`Import abgeschlossen: ${imported} neue Klasse(n), ${importedStudents} Schüler(innen) hinzugefügt.`, 'Import');
+            saveClasses();
+            await uiAlert(`Import abgeschlossen: ${imported} neue Klasse(n), ${importedStudents} Schüler(innen) hinzugefügt. Die Seite wird neu geladen.`, 'Import');
+            await flushAndReload();
         } catch (err) {
             await uiAlert('Import fehlgeschlagen: Datei konnte nicht gelesen werden. Bitte ein gültiges JSON (Klassenexport) oder eine CSV mit "Klasse;Name;Geschlecht" verwenden.', 'Import');
         }
@@ -801,6 +805,59 @@ function renderAttendanceSessionsList(cls) {
         list.appendChild(li);
     });
 }
+
+// TERMIN-IMPORT (CSV aus Excel): vergangene Anwesenheitschecks in die gewählte Klasse übernehmen.
+document.getElementById('attendance-import-help-btn').addEventListener('click', () => document.getElementById('attendance-import-help').classList.toggle('hidden'));
+const $attendanceImportInput = document.getElementById('attendance-import-input');
+document.getElementById('attendance-import-btn').addEventListener('click', async () => {
+    if (selAttendClassId === null) { await uiAlert('Bitte zuerst oben eine Klasse auswählen — die Termine werden in diese Klasse importiert.', 'Termin-Import'); return; }
+    $attendanceImportInput.click();
+});
+$attendanceImportInput.addEventListener('change', () => {
+    const file = $attendanceImportInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+        $attendanceImportInput.value = '';
+        const cls = classes.find(c => c.id === selAttendClassId);
+        if (!cls) return;
+        const { rows, invalid } = parseAttendanceCsv(String(reader.result));
+        if (rows.length === 0) {
+            await uiAlert('Keine gültigen Zeilen gefunden. Erwartetes Format: "Datum;Name;Status;Grund;Notiz" — siehe Fragezeichen-Hilfe neben dem Import-Knopf.', 'Termin-Import');
+            return;
+        }
+        // Namen der Klasse (inkl. ehemaliger Schüler) case-insensitiv nachschlagen.
+        const byName = new Map();
+        cls.students.concat(cls.formerStudents || []).forEach(s => byName.set(s.name.trim().toLowerCase(), s));
+        let importedRecords = 0;
+        const dates = new Set(), unknown = new Set();
+        if (!attendanceData[cls.id]) attendanceData[cls.id] = {};
+        rows.forEach(row => {
+            const student = byName.get(row.name.trim().toLowerCase());
+            if (!student) { unknown.add(row.name); return; }
+            if (!attendanceData[cls.id][row.date]) {
+                attendanceData[cls.id][row.date] = { date: row.date, weekday: getWeekdayIndex(row.date), records: {} };
+            }
+            attendanceData[cls.id][row.date].records[student.id] = {
+                status: row.status,
+                reasonCategory: row.status === 'absent' ? row.reasonCategory : '',
+                note: row.status === 'absent' ? row.note : ''
+            };
+            importedRecords++;
+            dates.add(row.date);
+        });
+        saveAttendanceData();
+        // Falls der gerade angezeigte Termin betroffen ist und keine ungespeicherten
+        // Änderungen offen sind, die Ansicht mit den importierten Daten auffrischen.
+        if (!attendanceDirty && dates.has($attendanceDate.value)) loadAttendanceSession();
+        else renderAttendanceSessionsList(cls);
+        let msg = `${importedRecords} Einträge an ${dates.size} Termin(en) in "${cls.name}" importiert.`;
+        if (unknown.size > 0) msg += `\n\nNicht zugeordnet (Name nicht in der Klasse): ${[...unknown].join(', ')}`;
+        if (invalid.length > 0) msg += `\n\n${invalid.length} Zeile(n) übersprungen (ungültiges Datum/Status).`;
+        await uiAlert(msg, 'Termin-Import');
+    };
+    reader.readAsText(file);
+});
 
 document.getElementById('load-to-teams-btn').addEventListener('click', async () => {
     const cls = classes.find(c => c.id === selAttendClassId);
@@ -1045,14 +1102,10 @@ document.getElementById('add-person-form').addEventListener('submit', async e =>
 });
 
 document.getElementById('clear-all-btn').addEventListener('click', async () => {
-    const ok = await uiConfirm('Alle Teilnehmer löschen?', { okLabel: 'Löschen', danger: true });
+    const ok = await uiConfirm('Alle Teilnehmer löschen? Die Seite wird danach neu geladen.', { okLabel: 'Löschen', danger: true });
     if (!ok) return;
-    withUndo('Teilnehmerliste geleert.', () => {
-        persons = []; personsManual = false; savePersons();
-        document.getElementById('source-banner').classList.add('hidden');
-        document.getElementById('results-section').classList.add('hidden');
-        renderPersonList();
-    });
+    persons = []; personsManual = false; savePersons();
+    await flushAndReload();
 });
 
 function renderPersonList() {
@@ -1311,7 +1364,7 @@ document.getElementById('backup-export-btn').addEventListener('click', async () 
             catch (e) { await uiAlert('Verschlüsselung fehlgeschlagen — Backup wurde nicht erstellt.'); return; }
         }
     }
-    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), `teamgenerator-backup-${todayStr()}.json`);
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), `klassenmanager-backup-${todayStr()}.json`);
 });
 
 const $backupFileInput = document.getElementById('backup-file-input');
@@ -1447,6 +1500,14 @@ document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && fileWriteTimer) { clearTimeout(fileWriteTimer); fileWriteTimer = null; writeDataFile(); }
 });
 
+// Seite neu laden, aber vorher einen evtl. ausstehenden Datendatei-Schreibvorgang
+// abschliessen, damit Datei- und Browser-Stand nach dem Reload nicht auseinanderlaufen.
+async function flushAndReload() {
+    if (fileWriteTimer) { clearTimeout(fileWriteTimer); fileWriteTimer = null; }
+    if (fileStorageActive && dataFileHandle) { try { await writeDataFile(); } catch (e) {} }
+    location.reload();
+}
+
 // Gleicht Browser-Stand und Datei ab: identisch → nichts tun; Datei leer/ungültig →
 // (nach Rückfrage) überschreiben; unterschiedlich → Nutzer entscheidet, welche Seite gilt.
 async function syncWithDataFile() {
@@ -1465,7 +1526,7 @@ async function syncWithDataFile() {
         result = validateBackup(data);
     } catch (e) {}
     if (!result) {
-        const ok = await uiConfirm(`Die Datei "${dataFileHandle.name}" enthält keine gültigen Team-Generator-Daten. Mit dem aktuellen Stand überschreiben?`, { title: 'Datendatei', okLabel: 'Überschreiben', danger: true });
+        const ok = await uiConfirm(`Die Datei "${dataFileHandle.name}" enthält keine gültigen Klassenmanager-Daten. Mit dem aktuellen Stand überschreiben?`, { title: 'Datendatei', okLabel: 'Überschreiben', danger: true });
         if (ok) await writeDataFile();
         else await disconnectDataFile();
         return;
@@ -1486,7 +1547,7 @@ async function connectDataFile() {
     let handle;
     try {
         handle = await window.showSaveFilePicker({
-            suggestedName: 'teamgenerator-daten.json',
+            suggestedName: 'klassenmanager-daten.json',
             types: [{ description: 'JSON-Datei', accept: { 'application/json': ['.json'] } }]
         });
     } catch (e) { return; } // abgebrochen
@@ -1534,4 +1595,13 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 
 // INIT
 loadStorage(); renderClassList(); renderClassDetail(); renderPersonList(); switchTab('classes');
+// Nach einem Reload durch "Neue Klasse" die eben angelegte Klasse wieder auswählen.
+try {
+    const pending = sessionStorage.getItem('tg2_selectClassAfterReload');
+    if (pending !== null) {
+        sessionStorage.removeItem('tg2_selectClassAfterReload');
+        const id = parseInt(pending, 10);
+        if (classes.find(c => c.id === id)) selectClass(id);
+    }
+} catch (e) {}
 initDataFile();
