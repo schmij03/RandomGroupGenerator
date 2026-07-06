@@ -493,9 +493,20 @@ Sport-Gruppe A;Kim;d;s;7a</pre>
                     </div>
                     <p class="text-xs text-amber-600 mt-0.5" id="points-total-meta"></p>
                 </div>
-                <button id="points-reset-btn" class="text-xs bg-white border border-amber-300 hover:bg-amber-100 text-amber-800 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5">
-                    <i class="fas fa-gift" aria-hidden="true"></i> Punkte einlösen (auf 0 zurücksetzen)
-                </button>
+                <div class="flex flex-wrap gap-2">
+                    <button id="points-adjust-btn" class="text-xs bg-white border border-amber-300 hover:bg-amber-100 text-amber-800 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5" title="Punkte pauschal hinzufügen oder abziehen, z.B. Startpunktestand aus dem alten Tracker">
+                        <i class="fas fa-plus-minus" aria-hidden="true"></i> Punkte anpassen
+                    </button>
+                    <button id="points-reset-btn" class="text-xs bg-white border border-amber-300 hover:bg-amber-100 text-amber-800 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5">
+                        <i class="fas fa-gift" aria-hidden="true"></i> Punkte einlösen (auf 0 zurücksetzen)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Punkteverlauf-Graph -->
+            <div class="mb-6 p-3 bg-white rounded-xl border border-gray-200">
+                <h3 class="text-sm font-semibold text-gray-600 mb-1"><i class="fas fa-chart-line mr-1" aria-hidden="true"></i>Punkteverlauf</h3>
+                <div id="points-chart" class="relative"></div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">

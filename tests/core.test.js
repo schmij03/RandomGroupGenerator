@@ -430,3 +430,37 @@ test('validateBackup: pointsData wird validiert, collectsPoints bleibt erhalten'
     assert.equal(result.pointsData['99'], undefined);              // verwaiste Klasse verworfen
     assert.equal(result.pointsIdCounter, 6);                       // wächst über höchste gültige ID
 });
+
+// --- computePointsSeries / Anpassungen ---
+test('computePointsSeries: Anpassungen (auch negativ) und Klammerung bei 0', () => {
+    const series = TG.computePointsSeries([
+        { id: 1, type: 'adjust', date: '2026-09-01', points: 30 },   // Startpunktestand
+        { id: 2, type: 'lektion', date: '2026-09-07', points: 5 },
+        { id: 3, type: 'adjust', date: '2026-09-08', points: -50 },  // fällt nicht unter 0
+        { id: 4, type: 'lektion', date: '2026-09-14', points: 7 }
+    ]);
+    assert.deepEqual(series.map(s => s.total), [30, 35, 0, 7]);
+    assert.equal(TG.computePointsTotal([
+        { type: 'adjust', points: 30 },
+        { type: 'lektion', points: 5 },
+        { type: 'reset' },
+        { type: 'lektion', points: 3 }
+    ]), 3);
+});
+
+test('validateBackup: adjust-Einträge bleiben erhalten (inkl. negativer Punkte)', () => {
+    const result = TG.validateBackup({
+        classes: [{ id: 1, name: '7a', students: [] }],
+        pointsData: { '1': { goals: [], entries: [
+            { id: 1, type: 'adjust', date: '2026-09-01', points: 30, note: 'Übertrag' },
+            { id: 2, type: 'adjust', date: '2026-09-02', points: -5 },
+            { id: 3, type: 'adjust', date: '2026-09-03', points: 99999 }
+        ] } }
+    });
+    const entries = result.pointsData['1'].entries;
+    assert.equal(entries.length, 3);
+    assert.equal(entries[0].points, 30);
+    assert.equal(entries[0].note, 'Übertrag');
+    assert.equal(entries[1].points, -5);
+    assert.equal(entries[2].points, 9999); // auf Bereich begrenzt
+});
