@@ -38,10 +38,14 @@
     // ("Max m s", "Max m (s)", "Max (m) (s)"). Nur KLEIN geschriebene Tags zählen
     // ("Max m"); Grossbuchstaben bleiben Namensbestandteil ("Anna M" = Name mit
     // Initial). In Klammern ist Gross-/Kleinschreibung egal: "Anna (M)".
+    // Optionales Klassenkürzel in eckigen Klammern am Ende: "Max m s [7a]".
     function bulkParse(text, addFn) {
         const entries = text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
         let added = 0, skipped = 0, defaults = 0;
         entries.forEach(entry => {
+            let classTag = '';
+            const tagMatch = entry.match(/\s*\[([^\]]{1,20})\]$/);
+            if (tagMatch) { classTag = tagMatch[1].trim(); entry = entry.slice(0, tagMatch.index).trim(); }
             let gender = 'female', sporty = false, rest = entry;
             let genderSet = false, sportySet = false, tagCount = 0;
             for (let iter = 0; iter < 2; iter++) {
@@ -69,7 +73,7 @@
             const cleanName = rest.replace(/[\s,:\-]+$/, '').trim();
             if (!cleanName) return;
             if (tagCount === 0) defaults++;
-            if (addFn(cleanName, gender, sporty)) added++; else skipped++;
+            if (addFn(cleanName, gender, sporty, classTag)) added++; else skipped++;
         });
         return { added, skipped, defaults };
     }
@@ -85,14 +89,15 @@
         lines.forEach((line, i) => {
             const parts = line.split(/[;,]/).map(p => p.trim());
             if (parts.length < 2) return;
-            const [className, studentName, genderRaw, sportyRaw] = parts;
+            const [className, studentName, genderRaw, sportyRaw, classTagRaw] = parts;
             if (!className || !studentName) return;
             if (i === 0 && isCsvHeader(className, studentName)) return;
             let gender = 'female';
             const g = (genderRaw || '').toLowerCase();
             if (g.startsWith('m')) gender = 'male'; else if (g.startsWith('d')) gender = 'diverse';
             const sporty = /^(s|ja|x|1|sportlich|true)$/i.test(sportyRaw || '');
-            rows.push({ className, studentName, gender, sporty });
+            const classTag = (classTagRaw || '').slice(0, 20).trim();
+            rows.push({ className, studentName, gender, sporty, classTag });
         });
         return rows;
     }
@@ -129,6 +134,13 @@
             rows.push({ date, name, status, reasonCategory, note });
         });
         return { rows, invalid };
+    }
+
+    // Schweizer Notenformel: Note = 5 × Punkte/Max + 1, begrenzt auf 1–6, auf Zehntel gerundet.
+    function pointsToGrade(points, maxPoints) {
+        if (typeof points !== 'number' || !isFinite(points) || typeof maxPoints !== 'number' || !(maxPoints > 0)) return null;
+        const grade = 5 * points / maxPoints + 1;
+        return Math.round(Math.min(6, Math.max(1, grade)) * 10) / 10;
     }
 
     // Führendes '='/'+'/'-'/'@' würde in Excel/LibreOffice als Formel ausgeführt (CSV-Injection).
@@ -222,12 +234,15 @@
     // gibt null zurück, wenn die Struktur nicht passt.
     function cleanPersonLike(s) {
         if (!s || typeof s !== 'object' || !Number.isInteger(s.id) || typeof s.name !== 'string' || !s.name.trim()) return null;
-        return { id: s.id, name: s.name.trim(), gender: sanitizeGender(s.gender), sporty: s.sporty === true };
+        return {
+            id: s.id, name: s.name.trim(), gender: sanitizeGender(s.gender), sporty: s.sporty === true,
+            classTag: typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : ''
+        };
     }
     function validateBackup(data) {
         if (!data || typeof data !== 'object' || !Array.isArray(data.classes)) return null;
         const cleanClasses = [];
-        let maxClassId = 0, maxStuId = 0, maxPersonId = 0;
+        let maxClassId = 0, maxStuId = 0, maxPersonId = 0, maxExamId = 0;
         for (const cls of data.classes) {
             if (!cls || typeof cls !== 'object') return null;
             const id = Number.isInteger(cls.id) && cls.id > 0 ? cls.id : null;
@@ -288,6 +303,35 @@
         for (const p of (Array.isArray(data.apartPairs) ? data.apartPairs : [])) {
             if (Array.isArray(p) && p.length === 2 && typeof p[0] === 'string' && typeof p[1] === 'string' && p[0].trim() && p[1].trim()) cleanApart.push([p[0], p[1]]);
         }
+        // Prüfungen: { [classId]: [ { id, title, date, mode:'points'|'grades', maxPoints, results:{studentId:Zahl} } ] }
+        // Punkte-Modus braucht ein gültiges Maximum; Noten müssen im Bereich 1–6 liegen.
+        const cleanExams = {};
+        if (data.exams && typeof data.exams === 'object' && !Array.isArray(data.exams)) {
+            for (const [classIdKey, list] of Object.entries(data.exams)) {
+                if (!cleanClasses.find(c => String(c.id) === classIdKey)) continue;
+                if (!Array.isArray(list)) continue;
+                const cleanList = [];
+                for (const ex of list) {
+                    if (!ex || typeof ex !== 'object' || !Number.isInteger(ex.id) || ex.id <= 0) continue;
+                    const title = typeof ex.title === 'string' ? ex.title.trim() : '';
+                    if (!title || typeof ex.date !== 'string' || !DATE_RE.test(ex.date)) continue;
+                    const mode = ex.mode === 'points' ? 'points' : 'grades';
+                    const maxPoints = typeof ex.maxPoints === 'number' && isFinite(ex.maxPoints) && ex.maxPoints > 0 ? ex.maxPoints : null;
+                    if (mode === 'points' && maxPoints === null) continue;
+                    const results = {};
+                    if (ex.results && typeof ex.results === 'object' && !Array.isArray(ex.results)) {
+                        for (const [stuKey, v] of Object.entries(ex.results)) {
+                            if (typeof v !== 'number' || !isFinite(v) || v < 0) continue;
+                            if (mode === 'grades' && (v < 1 || v > 6)) continue;
+                            results[stuKey] = v;
+                        }
+                    }
+                    cleanList.push({ id: ex.id, title, date: ex.date, mode, maxPoints: mode === 'points' ? maxPoints : null, results });
+                    if (ex.id > maxExamId) maxExamId = ex.id;
+                }
+                if (cleanList.length) cleanExams[classIdKey] = cleanList;
+            }
+        }
         return {
             classes: cleanClasses,
             classIdCounter: Math.max(Number.isInteger(data.classIdCounter) ? data.classIdCounter : 1, maxClassId + 1),
@@ -296,6 +340,8 @@
             persons: cleanPersons,
             personIdCounter: Math.max(Number.isInteger(data.personIdCounter) ? data.personIdCounter : 1, maxPersonId + 1),
             apartPairs: cleanApart,
+            exams: cleanExams,
+            examIdCounter: Math.max(Number.isInteger(data.examIdCounter) ? data.examIdCounter : 1, maxExamId + 1),
             exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : null
         };
     }
@@ -303,7 +349,7 @@
     return {
         DATE_RE, TIME_RE, WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES,
         sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
-        bulkParse, isCsvHeader, parseCsvImport, parseAttendanceCsv, escapeCsv,
+        bulkParse, isCsvHeader, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade,
         shuffleArray, distributeTeams, enforceApart,
         validateBackup
     };
