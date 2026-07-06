@@ -99,6 +99,70 @@ test('bulkParse: zählt Duplikate als übersprungen', () => {
     assert.equal(res.skipped, 1);
 });
 
+test('bulkParse: Klassenkürzel in eckigen Klammern', () => {
+    const out = [];
+    TG.bulkParse('Max m s [7a]\nAnna w [7b]\nKim d\nLea [8c]', (name, gender, sporty, classTag) => { out.push({ name, gender, sporty, classTag }); return true; });
+    assert.deepEqual(out, [
+        { name: 'Max', gender: 'male', sporty: true, classTag: '7a' },
+        { name: 'Anna', gender: 'female', sporty: false, classTag: '7b' },
+        { name: 'Kim', gender: 'diverse', sporty: false, classTag: '' },
+        { name: 'Lea', gender: 'female', sporty: false, classTag: '8c' }
+    ]);
+});
+
+// --- pointsToGrade ---
+test('pointsToGrade: Schweizer Formel, Rundung und Grenzen', () => {
+    assert.equal(TG.pointsToGrade(20, 20), 6);
+    assert.equal(TG.pointsToGrade(0, 20), 1);
+    assert.equal(TG.pointsToGrade(10, 20), 3.5);
+    assert.equal(TG.pointsToGrade(14.5, 20), 4.6); // 4.625 → 4.6
+    assert.equal(TG.pointsToGrade(25, 20), 6);     // über Max → gedeckelt
+    assert.equal(TG.pointsToGrade(5, 0), null);
+    assert.equal(TG.pointsToGrade('x', 20), null);
+});
+
+// --- parseCsvImport mit Kürzel-Spalte ---
+test('parseCsvImport: fünfte Spalte wird als Klassenkürzel gelesen', () => {
+    const rows = TG.parseCsvImport('Klasse;Name;Geschlecht;Sportlich;Kürzel\nGruppe A;Anna;w;s;7a\nGruppe A;Max;m;;');
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].classTag, '7a');
+    assert.equal(rows[1].classTag, '');
+});
+
+// --- validateBackup: Prüfungen ---
+test('validateBackup: Prüfungen werden validiert und normalisiert', () => {
+    const result = TG.validateBackup({
+        classes: [{ id: 1, name: '7a', students: [{ id: 1, name: 'Anna', gender: 'female' }] }],
+        exams: {
+            '1': [
+                { id: 1, title: 'LZK 1', date: '2026-03-01', mode: 'points', maxPoints: 20, results: { '1': 15, '2': -3 } },
+                { id: 2, title: 'LZK 2', date: '2026-03-08', mode: 'grades', results: { '1': 4.5, '2': 9 } },
+                { id: 3, title: '', date: '2026-03-15', mode: 'grades', results: {} },
+                { id: 4, title: 'Ohne Max', date: '2026-03-22', mode: 'points', results: {} }
+            ],
+            '99': [{ id: 5, title: 'Verwaist', date: '2026-01-01', mode: 'grades', results: {} }]
+        },
+        examIdCounter: 2
+    });
+    assert.ok(result);
+    assert.equal(result.exams['1'].length, 2);
+    assert.deepEqual(result.exams['1'][0].results, { '1': 15 });      // negative Punkte verworfen
+    assert.deepEqual(result.exams['1'][1].results, { '1': 4.5 });     // Note 9 verworfen
+    assert.equal(result.exams['99'], undefined);                       // verwaiste Klasse verworfen
+    assert.equal(result.examIdCounter, 3);                             // Zähler wächst über höchste gültige ID
+});
+
+test('validateBackup: classTag der Schüler bleibt erhalten und wird begrenzt', () => {
+    const result = TG.validateBackup({
+        classes: [{ id: 1, name: 'G', students: [
+            { id: 1, name: 'Anna', gender: 'female', classTag: '7a' },
+            { id: 2, name: 'Max', gender: 'male', classTag: 'x'.repeat(50) }
+        ] }]
+    });
+    assert.equal(result.classes[0].students[0].classTag, '7a');
+    assert.equal(result.classes[0].students[1].classTag.length, 20);
+});
+
 // --- parseAttendanceCsv ---
 test('parseAttendanceCsv: beide Datumsformate, Kopfzeile, Gründe und Notizen', () => {
     const { rows, invalid } = TG.parseAttendanceCsv(
@@ -132,8 +196,8 @@ test('parseAttendanceCsv: Status-Synonyme und ungültiger Status', () => {
 test('parseCsvImport: Kopfzeile wird übersprungen', () => {
     const rows = TG.parseCsvImport('Klasse;Name;Geschlecht;Sportlich\n7a;Anna;w;s\n7a;Max;m;');
     assert.equal(rows.length, 2);
-    assert.deepEqual(rows[0], { className: '7a', studentName: 'Anna', gender: 'female', sporty: true });
-    assert.deepEqual(rows[1], { className: '7a', studentName: 'Max', gender: 'male', sporty: false });
+    assert.deepEqual(rows[0], { className: '7a', studentName: 'Anna', gender: 'female', sporty: true, classTag: '' });
+    assert.deepEqual(rows[1], { className: '7a', studentName: 'Max', gender: 'male', sporty: false, classTag: '' });
 });
 
 test('parseCsvImport: ohne Kopfzeile bleibt alles erhalten', () => {

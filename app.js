@@ -2,7 +2,7 @@
 const {
     WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES, TIME_RE,
     sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
-    bulkParse, parseCsvImport, parseAttendanceCsv, escapeCsv,
+    bulkParse, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade,
     distributeTeams, enforceApart, validateBackup
 } = window.TG;
 
@@ -20,6 +20,9 @@ let attendanceData = {};
 let currentSessionRecords = {};
 let attendanceDirty = false;
 let statsSort = { key: 'name', dir: 1 };
+// exams: { [classId]: [ { id, title, date, mode:'points'|'grades', maxPoints, results:{ [studentId]: Zahl } } ] }
+let exams = {}, examIdCounter = 1;
+let selExamClassId = null, selExamId = null, examDirty = false;
 
 const GENDER_ICONS = {
     female:  '<i class="fas fa-venus text-pink-500" title="Weiblich" aria-hidden="true"></i><span class="sr-only">weiblich</span>',
@@ -54,6 +57,10 @@ function saveApartPairs() {
     try { localStorage.setItem('tg2_apart', JSON.stringify(apartPairs)); } catch(e) { storageWarn(); }
     scheduleDataFileWrite();
 }
+function saveExams() {
+    try { localStorage.setItem('tg2_exams', JSON.stringify(exams)); localStorage.setItem('tg2_examId', String(examIdCounter)); } catch(e) { storageWarn(); }
+    scheduleDataFileWrite();
+}
 function loadStorage() {
     try {
         const c = localStorage.getItem('tg2_classes');
@@ -65,8 +72,8 @@ function loadStorage() {
                     if (!Array.isArray(cls.students)) cls.students = [];
                     if (!Array.isArray(cls.formerStudents)) cls.formerStudents = [];
                     if (!Array.isArray(cls.schedule)) cls.schedule = [];
-                    cls.students.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; });
-                    cls.formerStudents.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; });
+                    cls.students.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; s.classTag = typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : ''; });
+                    cls.formerStudents.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; s.classTag = typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : ''; });
                 });
                 classIdCounter = parseInt(localStorage.getItem('tg2_classId')||'1',10) || 1;
                 stuIdCounter = parseInt(localStorage.getItem('tg2_stuId')||'1',10) || 1;
@@ -91,6 +98,12 @@ function loadStorage() {
         if (ap) {
             const parsed = JSON.parse(ap);
             if (Array.isArray(parsed)) apartPairs = parsed.filter(x => Array.isArray(x) && x.length === 2 && typeof x[0] === 'string' && typeof x[1] === 'string');
+        }
+        const ex = localStorage.getItem('tg2_exams');
+        if (ex) {
+            const parsed = JSON.parse(ex);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) exams = parsed;
+            examIdCounter = parseInt(localStorage.getItem('tg2_examId')||'1',10) || 1;
         }
     } catch(e) {}
 }
@@ -213,7 +226,7 @@ tabButtons.forEach((btn, i) => btn.addEventListener('keydown', e => {
     next.focus(); switchTab(next.dataset.tab);
 }));
 function switchTab(tab) {
-    ['classes','attendance','stats','teams'].forEach(t => document.getElementById('tab-'+t).classList.toggle('hidden', t !== tab));
+    ['classes','attendance','stats','exams','teams'].forEach(t => document.getElementById('tab-'+t).classList.toggle('hidden', t !== tab));
     tabButtons.forEach(btn => {
         const active = btn.dataset.tab === tab;
         btn.classList.toggle('active', active);
@@ -222,6 +235,7 @@ function switchTab(tab) {
     });
     if (tab === 'attendance') refreshAttendanceSelect();
     if (tab === 'stats') refreshStatsSelect();
+    if (tab === 'exams') refreshExamsSelect();
     if (tab === 'teams') renderPersonList();
 }
 
@@ -434,7 +448,8 @@ document.getElementById('add-student-form').addEventListener('submit', async e =
         const ok = await uiConfirm(`"${name}" ist bereits in dieser Klasse. Trotzdem hinzufügen (z.B. zweites Kind mit gleichem Namen)? Tipp: Mit Initial unterscheiden, z.B. "${name} M".`, { title: 'Doppelter Name', okLabel: 'Trotzdem hinzufügen' });
         if (!ok) return;
     }
-    cls.students.push({ id: stuIdCounter++, name, gender, sporty });
+    const classTag = document.getElementById('student-classtag-input').value.trim().slice(0, 20);
+    cls.students.push({ id: stuIdCounter++, name, gender, sporty, classTag });
     saveClasses();
     document.getElementById('student-name-input').value = '';
     document.getElementById('student-sporty-input').checked = false;
@@ -458,7 +473,7 @@ function removeStudent(studentId) {
         cls.students = cls.students.filter(s => s.id !== studentId);
         if (studentHasAttendance(cls.id, studentId)) {
             if (!Array.isArray(cls.formerStudents)) cls.formerStudents = [];
-            cls.formerStudents.push({ id: student.id, name: student.name, gender: student.gender, sporty: student.sporty === true });
+            cls.formerStudents.push({ id: student.id, name: student.name, gender: student.gender, sporty: student.sporty === true, classTag: student.classTag || '' });
         }
         saveClasses(); renderClassDetail();
     });
@@ -480,8 +495,25 @@ function renderStudentList(cls) {
         const icon = document.createElement('span'); icon.innerHTML = GENDER_ICONS[sanitizeGender(s.gender)];
         const nameSpan = document.createElement('span'); nameSpan.className = 'text-sm text-gray-700 truncate'; nameSpan.textContent = s.name;
         left.appendChild(icon); left.appendChild(nameSpan);
+        if (s.classTag) {
+            const tagBadge = document.createElement('span');
+            tagBadge.className = 'text-xs bg-sky-50 text-sky-700 border border-sky-200 px-1.5 py-0.5 rounded-full flex-shrink-0';
+            tagBadge.textContent = s.classTag;
+            left.appendChild(tagBadge);
+        }
         const actions = document.createElement('div');
         actions.className = 'flex items-center gap-0.5 flex-shrink-0';
+        const tagBtn = document.createElement('button');
+        tagBtn.className = 'text-gray-200 hover:text-sky-500 text-xs p-1 transition-colors';
+        tagBtn.innerHTML = '<i class="fas fa-tag" aria-hidden="true"></i>';
+        tagBtn.title = s.classTag ? `Klassenkürzel "${s.classTag}" ändern` : 'Klassenkürzel setzen';
+        tagBtn.setAttribute('aria-label', `Klassenkürzel von ${s.name} bearbeiten`);
+        tagBtn.addEventListener('click', async () => {
+            const val = await uiPrompt(`Klassenkürzel für "${s.name}" (leer = entfernen):`, { title: 'Klassenkürzel', placeholder: 'z.B. 7a', value: s.classTag || '' });
+            if (val === null) return;
+            s.classTag = val.trim().slice(0, 20);
+            saveClasses(); renderStudentList(cls);
+        });
         const sportyBtn = document.createElement('button');
         sportyBtn.className = `text-xs p-1 rounded transition-colors ${s.sporty ? 'text-emerald-500 hover:text-emerald-700' : 'text-gray-200 hover:text-emerald-400'}`;
         sportyBtn.innerHTML = '<i class="fas fa-person-running" aria-hidden="true"></i>';
@@ -513,9 +545,9 @@ document.getElementById('class-bulk-import-btn').addEventListener('click', () =>
     if (!cls) return;
     const text = document.getElementById('class-bulk-input').value.trim();
     if (!text) return;
-    const { added, skipped, defaults } = bulkParse(text, (name, gender, sporty) => {
+    const { added, skipped, defaults } = bulkParse(text, (name, gender, sporty, classTag) => {
         if (cls.students.find(s => s.name.toLowerCase() === name.toLowerCase())) return false;
-        cls.students.push({ id: stuIdCounter++, name, gender, sporty }); return true;
+        cls.students.push({ id: stuIdCounter++, name, gender, sporty, classTag: classTag || '' }); return true;
     });
     saveClasses(); document.getElementById('class-bulk-input').value = '';
     showBulkMsg('class-bulk-msg', added, skipped, defaults);
@@ -532,9 +564,22 @@ function downloadBlob(blob, filename) {
     URL.revokeObjectURL(url);
 }
 
+// Umlaute/Akzente für Dateinamen transliterieren — Chromium ersetzt Download-Namen
+// mit Nicht-ASCII-Zeichen sonst teils durch ein generisches "download".
+function safeFilePart(str, maxLen = 40) {
+    return String(str)
+        .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+        .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue')
+        .replace(/ß/g, 'ss')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^A-Za-z0-9._-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, maxLen) || 'export';
+}
+
 document.getElementById('export-classes-btn').addEventListener('click', async () => {
     if (classes.length === 0) { await uiAlert('Keine Klassen zum Exportieren vorhanden.'); return; }
-    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender, sporty: s.sporty === true })) }));
+    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender, sporty: s.sporty === true, classTag: s.classTag || '' })) }));
     downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `klassen-export-${todayStr()}.json`);
 });
 
@@ -568,7 +613,8 @@ $importFileInput.addEventListener('change', () => {
                         if (cls.students.find(st => st.name.toLowerCase() === sName.toLowerCase())) return;
                         const gender = (typeof s === 'object' && (s.gender === 'female' || s.gender === 'male' || s.gender === 'diverse')) ? s.gender : 'female';
                         const sporty = typeof s === 'object' && s.sporty === true;
-                        cls.students.push({ id: stuIdCounter++, name: sName, gender, sporty });
+                        const classTag = (typeof s === 'object' && typeof s.classTag === 'string') ? s.classTag.slice(0, 20).trim() : '';
+                        cls.students.push({ id: stuIdCounter++, name: sName, gender, sporty, classTag });
                         importedStudents++;
                     });
                 });
@@ -577,7 +623,7 @@ $importFileInput.addEventListener('change', () => {
                     let cls = classes.find(c => c.name.toLowerCase() === row.className.toLowerCase());
                     if (!cls) { cls = { id: classIdCounter++, name: row.className, students: [], formerStudents: [], schedule: [] }; classes.push(cls); imported++; }
                     if (cls.students.find(st => st.name.toLowerCase() === row.studentName.toLowerCase())) return;
-                    cls.students.push({ id: stuIdCounter++, name: row.studentName, gender: row.gender, sporty: row.sporty });
+                    cls.students.push({ id: stuIdCounter++, name: row.studentName, gender: row.gender, sporty: row.sporty, classTag: row.classTag || '' });
                     importedStudents++;
                 });
             }
@@ -612,7 +658,7 @@ async function confirmDiscardAttendance() {
     return ok;
 }
 window.addEventListener('beforeunload', e => {
-    if (attendanceDirty) { e.preventDefault(); e.returnValue = ''; }
+    if (attendanceDirty || examDirty) { e.preventDefault(); e.returnValue = ''; }
 });
 
 function refreshAttendanceSelect() {
@@ -892,6 +938,7 @@ function refreshStatsSelect() {
 
 document.getElementById('stats-class-select').addEventListener('change', renderStats);
 document.getElementById('stats-semester-select').addEventListener('change', renderStats);
+document.getElementById('stats-classtag-select').addEventListener('change', renderStats);
 
 document.querySelectorAll('#stats-table th[data-sort-key]').forEach(th => {
     th.addEventListener('click', () => {
@@ -936,11 +983,42 @@ function sortStatsRows(rows) {
     const key = statsSort.key;
     return rows.slice().sort((a, b) => {
         if (key === 'name') return dir * a.student.name.localeCompare(b.student.name, 'de');
+        if (key === 'classTag') {
+            const cmp = (a.student.classTag || '').localeCompare(b.student.classTag || '', 'de');
+            if (cmp !== 0) return dir * cmp;
+            return a.student.name.localeCompare(b.student.name, 'de');
+        }
         const av = a[key] === null ? -1 : a[key];
         const bv = b[key] === null ? -1 : b[key];
         if (av !== bv) return dir * (av - bv);
         return a.student.name.localeCompare(b.student.name, 'de');
     });
+}
+
+// Kürzel-Dropdown mit den in der Klasse vorkommenden Klassenkürzeln füllen;
+// ausblenden, wenn die Klasse keine Kürzel nutzt.
+function refreshStatsClassTagSelect(cls) {
+    const wrap = document.getElementById('stats-classtag-wrap');
+    const sel = document.getElementById('stats-classtag-select');
+    const prev = sel.value;
+    const tags = cls
+        ? [...new Set(cls.students.concat(cls.formerStudents || []).map(s => s.classTag || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'))
+        : [];
+    sel.innerHTML = '<option value="all">Alle Klassen</option>';
+    tags.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t; opt.textContent = t;
+        sel.appendChild(opt);
+    });
+    const hasUntagged = cls && cls.students.concat(cls.formerStudents || []).some(s => !s.classTag);
+    if (tags.length && hasUntagged) {
+        const opt = document.createElement('option');
+        opt.value = '__none__'; opt.textContent = 'Ohne Kürzel';
+        sel.appendChild(opt);
+    }
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+    wrap.classList.toggle('hidden', tags.length === 0);
+    return sel.value;
 }
 
 function renderStats() {
@@ -950,6 +1028,7 @@ function renderStats() {
     const contentEl = document.getElementById('stats-content');
     const exportBtn = document.getElementById('export-stats-btn');
     const cls = classes.find(c => c.id === id);
+    const tagFilter = refreshStatsClassTagSelect(cls); // 'all' | '__none__' | Kürzel
     let sessions = cls && attendanceData[cls.id] ? Object.values(attendanceData[cls.id]).sort((a, b) => a.date.localeCompare(b.date)) : [];
     if (semesterFilter !== 'all') sessions = sessions.filter(session => getSemester(session.date) === parseInt(semesterFilter, 10));
     if (!cls || sessions.length === 0) {
@@ -959,7 +1038,9 @@ function renderStats() {
     emptyEl.classList.add('hidden'); contentEl.classList.remove('hidden'); exportBtn.classList.remove('hidden');
     document.getElementById('stats-session-count').textContent = sessions.length;
 
-    const statsRows = sortStatsRows(buildStatsRows(cls, sessions));
+    let statsRows = sortStatsRows(buildStatsRows(cls, sessions));
+    if (tagFilter === '__none__') statsRows = statsRows.filter(r => !(r.student.classTag || ''));
+    else if (tagFilter !== 'all') statsRows = statsRows.filter(r => (r.student.classTag || '') === tagFilter);
 
     document.querySelectorAll('#stats-table th[data-sort-key]').forEach(th => {
         const active = th.dataset.sortKey === statsSort.key;
@@ -985,6 +1066,9 @@ function renderStats() {
             badge.textContent = 'ehemalig';
             nameTd.appendChild(badge);
         }
+        const tagTd = document.createElement('td');
+        tagTd.className = 'px-3 py-2 text-xs text-sky-700';
+        tagTd.textContent = row.student.classTag || '–';
         const presentTd = document.createElement('td'); presentTd.className = 'text-center px-3 py-2 text-green-700'; presentTd.textContent = row.present;
         const absentTd = document.createElement('td'); absentTd.className = 'text-center px-3 py-2 text-red-600'; absentTd.textContent = row.absent;
         const recordedTd = document.createElement('td');
@@ -1001,7 +1085,7 @@ function renderStats() {
         reasonsTd.className = 'px-3 py-2 text-xs text-gray-500';
         const reasonEntries = Object.entries(row.reasonCounts);
         reasonsTd.textContent = reasonEntries.length ? reasonEntries.map(([k, v]) => `${k}: ${v}`).join(', ') : '–';
-        tr.appendChild(nameTd); tr.appendChild(presentTd); tr.appendChild(absentTd); tr.appendChild(recordedTd); tr.appendChild(quoteTd); tr.appendChild(reasonsTd);
+        tr.appendChild(nameTd); tr.appendChild(tagTd); tr.appendChild(presentTd); tr.appendChild(absentTd); tr.appendChild(recordedTd); tr.appendChild(quoteTd); tr.appendChild(reasonsTd);
         tbody.appendChild(tr);
 
         if (row.absences.length > 0) {
@@ -1010,7 +1094,7 @@ function renderStats() {
             const detailTr = document.createElement('tr');
             detailTr.className = 'hidden bg-gray-50 border-t border-gray-100';
             const detailTd = document.createElement('td');
-            detailTd.colSpan = 6;
+            detailTd.colSpan = 7;
             detailTd.className = 'px-3 py-2';
             const ul = document.createElement('ul');
             ul.className = 'text-xs text-gray-600 space-y-1';
@@ -1048,20 +1132,324 @@ function renderStats() {
     document.getElementById('stats-total-absent').textContent = totalAbsent;
     document.getElementById('stats-avg-quote').textContent = avgQuote === null ? '–' : `${avgQuote}%`;
 
-    exportBtn.onclick = () => exportStatsCsv(cls, statsRows, sessions.length, semesterFilter);
+    exportBtn.onclick = () => exportStatsCsv(cls, statsRows, sessions.length, semesterFilter, tagFilter);
 }
 
-function exportStatsCsv(cls, statsRows, sessionCount, semesterFilter) {
-    const lines = [['Name', 'Status', 'Anwesend', 'Abwesend', 'Erfasst (von ' + sessionCount + ')', 'Quote (%)', 'Gründe', 'Abwesenheits-Details'].map(escapeCsv).join(';')];
+function exportStatsCsv(cls, statsRows, sessionCount, semesterFilter, tagFilter) {
+    const lines = [['Name', 'Klasse', 'Status', 'Anwesend', 'Abwesend', 'Erfasst (von ' + sessionCount + ')', 'Quote (%)', 'Gründe', 'Abwesenheits-Details'].map(escapeCsv).join(';')];
     statsRows.forEach(row => {
         const reasons = Object.entries(row.reasonCounts).map(([k, v]) => `${k}: ${v}`).join(', ');
         const details = (row.absences || []).map(a => `${formatDateDisplay(a.date)} ${a.reasonCategory || 'Ohne Angabe'}${a.note ? ` (${a.note})` : ''}`).join(' | ');
-        lines.push([row.student.name, row.former ? 'ehemalig' : 'aktiv', row.present, row.absent, row.recorded, row.quote === null ? '' : row.quote, reasons, details].map(escapeCsv).join(';'));
+        lines.push([row.student.name, row.student.classTag || '', row.former ? 'ehemalig' : 'aktiv', row.present, row.absent, row.recorded, row.quote === null ? '' : row.quote, reasons, details].map(escapeCsv).join(';'));
     });
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
     const semesterSuffix = semesterFilter === '1' ? '-Semester1' : semesterFilter === '2' ? '-Semester2' : '';
-    downloadBlob(blob, `anwesenheit-${cls.name}${semesterSuffix}-${todayStr()}.csv`);
+    const tagSuffix = tagFilter && tagFilter !== 'all' ? `-${tagFilter === '__none__' ? 'OhneKuerzel' : safeFilePart(tagFilter)}` : '';
+    downloadBlob(blob, `anwesenheit-${safeFilePart(cls.name)}${semesterSuffix}${tagSuffix}-${todayStr()}.csv`);
 }
+
+// TAB: PRÜFUNGEN / LERNZIELKONTROLLEN
+const $examsSelect = document.getElementById('exams-class-select');
+
+function refreshExamsSelect() {
+    const prev = $examsSelect.value;
+    $examsSelect.innerHTML = '<option value="">-- Klasse wählen --</option>';
+    classes.forEach(cls => {
+        const opt = document.createElement('option');
+        opt.value = String(cls.id); opt.textContent = cls.name;
+        $examsSelect.appendChild(opt);
+    });
+    if (prev && classes.find(c => String(c.id) === prev)) { $examsSelect.value = prev; }
+}
+
+async function confirmDiscardExam() {
+    if (!examDirty) return true;
+    const ok = await uiConfirm('Es gibt ungespeicherte Prüfungs-Eingaben. Ohne Speichern fortfahren?', { okLabel: 'Verwerfen', danger: true });
+    if (ok) { examDirty = false; updateExamDirtyHint(); }
+    return ok;
+}
+function updateExamDirtyHint() {
+    document.getElementById('exam-unsaved-hint').classList.toggle('hidden', !examDirty);
+}
+
+$examsSelect.addEventListener('change', async function() {
+    if (!(await confirmDiscardExam())) { this.value = selExamClassId === null ? '' : String(selExamClassId); return; }
+    const id = parseInt(this.value, 10);
+    const emptyEl = document.getElementById('exams-empty');
+    const contentEl = document.getElementById('exams-content');
+    const createBtn = document.getElementById('create-exam-btn');
+    if (isNaN(id)) {
+        selExamClassId = null; selExamId = null;
+        emptyEl.classList.remove('hidden'); contentEl.classList.add('hidden'); createBtn.classList.add('hidden');
+        return;
+    }
+    selExamClassId = id; selExamId = null;
+    emptyEl.classList.add('hidden'); contentEl.classList.remove('hidden'); createBtn.classList.remove('hidden');
+    document.getElementById('new-exam-form').classList.add('hidden');
+    renderExamList();
+    renderExamDetail();
+});
+
+document.getElementById('create-exam-btn').addEventListener('click', () => {
+    const form = document.getElementById('new-exam-form');
+    form.classList.toggle('hidden');
+    if (!form.classList.contains('hidden')) {
+        document.getElementById('exam-title-input').value = '';
+        document.getElementById('exam-date-input').value = todayStr();
+        document.getElementById('exam-form-error').classList.add('hidden');
+        document.getElementById('exam-title-input').focus();
+    }
+});
+document.getElementById('cancel-exam-btn').addEventListener('click', () => document.getElementById('new-exam-form').classList.add('hidden'));
+document.querySelectorAll('input[name="exam-mode"]').forEach(radio => radio.addEventListener('change', () => {
+    document.getElementById('exam-maxpoints-wrap').classList.toggle('hidden', radio.value !== 'points' || !radio.checked);
+}));
+
+document.getElementById('save-exam-btn').addEventListener('click', async () => {
+    const cls = classes.find(c => c.id === selExamClassId);
+    if (!cls) return;
+    const errEl = document.getElementById('exam-form-error');
+    const title = document.getElementById('exam-title-input').value.trim();
+    const date = document.getElementById('exam-date-input').value;
+    const mode = document.querySelector('input[name="exam-mode"]:checked').value;
+    const maxPoints = parseFloat(document.getElementById('exam-maxpoints-input').value);
+    if (!title) { errEl.textContent = 'Bitte einen Titel angeben.'; errEl.classList.remove('hidden'); return; }
+    if (!date) { errEl.textContent = 'Bitte ein Datum angeben.'; errEl.classList.remove('hidden'); return; }
+    if (mode === 'points' && (!isFinite(maxPoints) || maxPoints <= 0)) { errEl.textContent = 'Bitte eine gültige Maximalpunktzahl angeben.'; errEl.classList.remove('hidden'); return; }
+    if (!(await confirmDiscardExam())) return;
+    if (!exams[cls.id]) exams[cls.id] = [];
+    const exam = { id: examIdCounter++, title, date, mode, maxPoints: mode === 'points' ? maxPoints : null, results: {} };
+    exams[cls.id].push(exam);
+    saveExams();
+    document.getElementById('new-exam-form').classList.add('hidden');
+    selExamId = exam.id;
+    renderExamList();
+    renderExamDetail();
+});
+
+function renderExamList() {
+    const cls = classes.find(c => c.id === selExamClassId);
+    const list = document.getElementById('exam-list');
+    list.innerHTML = '';
+    const examList = (cls && exams[cls.id] ? exams[cls.id] : []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    if (examList.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'text-gray-400 text-xs py-2';
+        li.textContent = 'Noch keine Prüfungen erfasst.';
+        list.appendChild(li);
+        return;
+    }
+    examList.forEach(exam => {
+        const li = document.createElement('li');
+        const isActive = exam.id === selExamId;
+        li.className = `rounded-lg border-2 transition-all ${isActive ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300 hover:bg-indigo-50'}`;
+        const btn = document.createElement('button');
+        btn.className = 'w-full text-left px-3 py-2';
+        const titleSpan = document.createElement('div');
+        titleSpan.className = 'font-medium text-sm truncate';
+        titleSpan.textContent = exam.title;
+        const metaSpan = document.createElement('div');
+        metaSpan.className = `text-xs ${isActive ? 'text-indigo-200' : 'text-gray-400'}`;
+        const gradedCount = Object.keys(exam.results).length;
+        metaSpan.textContent = `${formatDateDisplay(exam.date)} · ${gradedCount} bewertet`;
+        btn.appendChild(titleSpan); btn.appendChild(metaSpan);
+        btn.addEventListener('click', async () => {
+            if (exam.id === selExamId) return;
+            if (!(await confirmDiscardExam())) return;
+            selExamId = exam.id;
+            renderExamList(); renderExamDetail();
+        });
+        li.appendChild(btn);
+        list.appendChild(li);
+    });
+}
+
+function getSelectedExam() {
+    const list = exams[selExamClassId];
+    return list ? list.find(e => e.id === selExamId) : null;
+}
+
+// Zeilen der Ergebnistabelle: aktuelle Schüler(innen) plus Ehemalige mit erfasstem Resultat.
+function examRowStudents(cls, exam) {
+    const rows = cls.students.slice();
+    (cls.formerStudents || []).forEach(s => {
+        if (exam.results[s.id] !== undefined) rows.push({ ...s, former: true });
+    });
+    return rows;
+}
+
+function examGradeOf(exam, value) {
+    if (typeof value !== 'number' || !isFinite(value)) return null;
+    return exam.mode === 'points' ? pointsToGrade(value, exam.maxPoints) : Math.round(value * 10) / 10;
+}
+function gradeColorClass(grade) {
+    return grade === null ? 'text-gray-300' : grade < 4 ? 'text-red-600' : 'text-green-700';
+}
+
+function renderExamDetail() {
+    const cls = classes.find(c => c.id === selExamClassId);
+    const exam = getSelectedExam();
+    const emptyEl = document.getElementById('exam-detail-empty');
+    const detailEl = document.getElementById('exam-detail');
+    if (!cls || !exam) { detailEl.classList.add('hidden'); emptyEl.classList.remove('hidden'); return; }
+    emptyEl.classList.add('hidden'); detailEl.classList.remove('hidden');
+    document.getElementById('exam-detail-title').textContent = exam.title;
+    document.getElementById('exam-detail-meta').textContent =
+        `${formatDateDisplay(exam.date)} · ${exam.mode === 'points' ? `Punkte (max. ${exam.maxPoints})` : 'Noten direkt'}`;
+    document.getElementById('exam-input-col-header').textContent = exam.mode === 'points' ? 'Punkte' : 'Note';
+    examDirty = false; updateExamDirtyHint();
+
+    const tbody = document.getElementById('exam-results-body');
+    tbody.innerHTML = '';
+    examRowStudents(cls, exam).forEach(s => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-t border-gray-100';
+        const nameTd = document.createElement('td');
+        nameTd.className = 'px-3 py-1.5 flex items-center gap-2';
+        nameTd.appendChild(genderIconEl(s.gender));
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = s.name;
+        nameTd.appendChild(nameSpan);
+        if (s.former) {
+            const badge = document.createElement('span');
+            badge.className = 'text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full';
+            badge.textContent = 'ehemalig';
+            nameTd.appendChild(badge);
+        }
+        const tagTd = document.createElement('td');
+        tagTd.className = 'px-3 py-1.5 text-xs text-sky-700';
+        tagTd.textContent = s.classTag || '–';
+        const inputTd = document.createElement('td');
+        inputTd.className = 'text-center px-3 py-1.5';
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.step = exam.mode === 'points' ? '0.5' : '0.1';
+        input.min = exam.mode === 'points' ? '0' : '1';
+        if (exam.mode === 'points') input.max = String(exam.maxPoints);
+        else input.max = '6';
+        input.className = 'w-20 border rounded-md p-1.5 text-sm text-center focus:border-indigo-500 focus:outline-none exam-result-input';
+        input.dataset.studentId = String(s.id);
+        input.setAttribute('aria-label', `${exam.mode === 'points' ? 'Punkte' : 'Note'} für ${s.name}`);
+        if (exam.results[s.id] !== undefined) input.value = String(exam.results[s.id]);
+        const gradeTd = document.createElement('td');
+        gradeTd.className = 'text-center px-3 py-1.5 font-semibold exam-grade-cell';
+        const updateGradeCell = () => {
+            const v = input.value === '' ? null : parseFloat(input.value);
+            const grade = v === null || !isFinite(v) ? null : examGradeOf(exam, v);
+            gradeTd.textContent = grade === null ? '–' : grade.toFixed(1);
+            gradeTd.className = `text-center px-3 py-1.5 font-semibold exam-grade-cell ${gradeColorClass(grade)}`;
+        };
+        input.addEventListener('input', () => { examDirty = true; updateExamDirtyHint(); updateGradeCell(); });
+        updateGradeCell();
+        inputTd.appendChild(input);
+        tr.appendChild(nameTd); tr.appendChild(tagTd); tr.appendChild(inputTd); tr.appendChild(gradeTd);
+        tbody.appendChild(tr);
+    });
+    renderExamStats(cls, exam);
+}
+
+document.getElementById('save-exam-results-btn').addEventListener('click', async () => {
+    const cls = classes.find(c => c.id === selExamClassId);
+    const exam = getSelectedExam();
+    if (!cls || !exam) return;
+    const invalid = [];
+    const newResults = {};
+    document.querySelectorAll('#exam-results-body .exam-result-input').forEach(input => {
+        if (input.value === '') return;
+        const v = parseFloat(input.value);
+        const max = exam.mode === 'points' ? exam.maxPoints : 6;
+        const min = exam.mode === 'points' ? 0 : 1;
+        if (!isFinite(v) || v < min || v > max) { invalid.push(input); return; }
+        newResults[input.dataset.studentId] = v;
+    });
+    if (invalid.length) {
+        await uiAlert(`${invalid.length} Eingabe(n) sind ungültig (${exam.mode === 'points' ? `0–${exam.maxPoints} Punkte` : 'Note 1–6'}) und wurden nicht gespeichert.`, 'Prüfung');
+    }
+    exam.results = newResults;
+    saveExams();
+    examDirty = false; updateExamDirtyHint();
+    renderExamList();
+    renderExamStats(cls, exam);
+    showToast('Prüfungsergebnisse gespeichert.');
+});
+
+// Auswertung: Ø-Note gesamt und — wenn die Gruppe Klassenkürzel nutzt — separat pro Klasse.
+function renderExamStats(cls, exam) {
+    const container = document.getElementById('exam-stats-rows');
+    container.innerHTML = '';
+    const rows = examRowStudents(cls, exam)
+        .map(s => ({ student: s, grade: exam.results[s.id] !== undefined ? examGradeOf(exam, exam.results[s.id]) : null }))
+        .filter(r => r.grade !== null);
+    const addStatRow = (label, group) => {
+        const div = document.createElement('div');
+        div.className = 'flex items-center justify-between gap-2 flex-wrap';
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'text-xs font-medium text-indigo-900';
+        labelSpan.textContent = label;
+        const valSpan = document.createElement('span');
+        valSpan.className = 'text-xs text-indigo-800';
+        if (group.length === 0) { valSpan.textContent = 'keine Ergebnisse'; }
+        else {
+            const avg = group.reduce((sum, r) => sum + r.grade, 0) / group.length;
+            const insufficient = group.filter(r => r.grade < 4).length;
+            const min = Math.min(...group.map(r => r.grade));
+            const max = Math.max(...group.map(r => r.grade));
+            valSpan.textContent = `${group.length} bewertet · Ø ${avg.toFixed(2)} · min ${min.toFixed(1)} / max ${max.toFixed(1)}${insufficient ? ` · ${insufficient} ungenügend` : ''}`;
+        }
+        div.appendChild(labelSpan); div.appendChild(valSpan);
+        container.appendChild(div);
+    };
+    addStatRow('Gesamt', rows);
+    const tags = [...new Set(rows.map(r => r.student.classTag || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+    if (tags.length) {
+        tags.forEach(tag => addStatRow(`Klasse ${tag}`, rows.filter(r => (r.student.classTag || '') === tag)));
+        const untagged = rows.filter(r => !(r.student.classTag || ''));
+        if (untagged.length) addStatRow('Ohne Kürzel', untagged);
+    }
+}
+
+document.getElementById('delete-exam-btn').addEventListener('click', async () => {
+    const cls = classes.find(c => c.id === selExamClassId);
+    const exam = getSelectedExam();
+    if (!cls || !exam) return;
+    const ok = await uiConfirm(`Prüfung "${exam.title}" vom ${formatDateDisplay(exam.date)} wirklich löschen?`, { okLabel: 'Löschen', danger: true });
+    if (!ok) return;
+    exams[cls.id] = exams[cls.id].filter(e => e.id !== exam.id);
+    if (exams[cls.id].length === 0) delete exams[cls.id];
+    saveExams();
+    selExamId = null; examDirty = false; updateExamDirtyHint();
+    renderExamList(); renderExamDetail();
+});
+
+// TXT-Export: eine Zeile pro Schüler(in) im Format "Name Wert" — Wert ist im
+// Punkte-Modus die Punktzahl, im Noten-Modus die eingegebene Note. Mischt die
+// Gruppe mehrere Klassenkürzel, wird pro Kürzel eine eigene Datei erzeugt.
+document.getElementById('export-exam-btn').addEventListener('click', async () => {
+    const cls = classes.find(c => c.id === selExamClassId);
+    const exam = getSelectedExam();
+    if (!cls || !exam) return;
+    const rows = examRowStudents(cls, exam).filter(s => exam.results[s.id] !== undefined);
+    if (rows.length === 0) { await uiAlert('Noch keine Ergebnisse erfasst — nichts zu exportieren.', 'Prüfung exportieren'); return; }
+    const groups = new Map();
+    rows.forEach(s => {
+        const tag = s.classTag || '';
+        if (!groups.has(tag)) groups.set(tag, []);
+        groups.get(tag).push(s);
+    });
+    const multi = groups.size > 1;
+    [...groups.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], 'de'))
+        .forEach(([tag, students], i) => {
+            const lines = students
+                .slice().sort((a, b) => a.name.localeCompare(b.name, 'de'))
+                .map(s => `${s.name} ${exam.results[s.id]}`);
+            const tagPart = tag ? `-${safeFilePart(tag)}` : (multi ? '-ohne-kuerzel' : '');
+            const fname = `pruefung-${safeFilePart(exam.title)}-${exam.date}${tagPart}.txt`;
+            // Downloads leicht versetzt anstossen, damit der Browser mehrere Dateien zulässt.
+            setTimeout(() => downloadBlob(new Blob([lines.join('\n') + '\n'], { type: 'text/plain' }), fname), i * 300);
+        });
+    if (multi) showToast(`${groups.size} Textdateien werden heruntergeladen (eine pro Klasse). Der Browser fragt evtl. nach Erlaubnis für mehrere Downloads.`);
+});
 
 // TAB 3: TEAMS
 async function addPerson(name, gender, sporty = false, { confirmDuplicate = false } = {}) {
@@ -1341,12 +1729,13 @@ async function decryptBackup(payload, password) {
 // Serialisiert den kompletten App-Zustand (auch für die lokale Datendatei genutzt).
 function buildBackupObject() {
     return {
-        version: 2,
+        version: 3,
         exportedAt: new Date().toISOString(),
         classes, classIdCounter, stuIdCounter,
         attendanceData,
         persons, personIdCounter,
-        apartPairs
+        apartPairs,
+        exams, examIdCounter
     };
 }
 
@@ -1407,10 +1796,13 @@ function applyRestoredData(result) {
     persons = result.persons;
     personIdCounter = result.personIdCounter;
     apartPairs = result.apartPairs || [];
+    exams = result.exams || {};
+    examIdCounter = result.examIdCounter || 1;
     personsManual = false;
     activeClassId = null; selAttendClassId = null; currentSessionRecords = {};
+    selExamClassId = null; selExamId = null; examDirty = false;
     attendanceDirty = false; updateDirtyHint();
-    saveClasses(); saveAttendanceData(); savePersons(); saveApartPairs();
+    saveClasses(); saveAttendanceData(); savePersons(); saveApartPairs(); saveExams();
     renderClassList(); renderClassDetail(); renderPersonList();
     $attendanceSelect.value = '';
     document.getElementById('attendance-empty').classList.remove('hidden');
