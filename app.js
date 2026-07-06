@@ -564,6 +564,19 @@ function downloadBlob(blob, filename) {
     URL.revokeObjectURL(url);
 }
 
+// Umlaute/Akzente für Dateinamen transliterieren — Chromium ersetzt Download-Namen
+// mit Nicht-ASCII-Zeichen sonst teils durch ein generisches "download".
+function safeFilePart(str, maxLen = 40) {
+    return String(str)
+        .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+        .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue')
+        .replace(/ß/g, 'ss')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^A-Za-z0-9._-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, maxLen) || 'export';
+}
+
 document.getElementById('export-classes-btn').addEventListener('click', async () => {
     if (classes.length === 0) { await uiAlert('Keine Klassen zum Exportieren vorhanden.'); return; }
     const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender, sporty: s.sporty === true, classTag: s.classTag || '' })) }));
@@ -1131,8 +1144,8 @@ function exportStatsCsv(cls, statsRows, sessionCount, semesterFilter, tagFilter)
     });
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
     const semesterSuffix = semesterFilter === '1' ? '-Semester1' : semesterFilter === '2' ? '-Semester2' : '';
-    const tagSuffix = tagFilter && tagFilter !== 'all' ? `-${tagFilter === '__none__' ? 'OhneKuerzel' : tagFilter}` : '';
-    downloadBlob(blob, `anwesenheit-${cls.name}${semesterSuffix}${tagSuffix}-${todayStr()}.csv`);
+    const tagSuffix = tagFilter && tagFilter !== 'all' ? `-${tagFilter === '__none__' ? 'OhneKuerzel' : safeFilePart(tagFilter)}` : '';
+    downloadBlob(blob, `anwesenheit-${safeFilePart(cls.name)}${semesterSuffix}${tagSuffix}-${todayStr()}.csv`);
 }
 
 // TAB: PRÜFUNGEN / LERNZIELKONTROLLEN
@@ -1408,19 +1421,34 @@ document.getElementById('delete-exam-btn').addEventListener('click', async () =>
     renderExamList(); renderExamDetail();
 });
 
-document.getElementById('export-exam-btn').addEventListener('click', () => {
+// TXT-Export: eine Zeile pro Schüler(in) im Format "Name Wert" — Wert ist im
+// Punkte-Modus die Punktzahl, im Noten-Modus die eingegebene Note. Mischt die
+// Gruppe mehrere Klassenkürzel, wird pro Kürzel eine eigene Datei erzeugt.
+document.getElementById('export-exam-btn').addEventListener('click', async () => {
     const cls = classes.find(c => c.id === selExamClassId);
     const exam = getSelectedExam();
     if (!cls || !exam) return;
-    const valueHeader = exam.mode === 'points' ? `Punkte (max. ${exam.maxPoints})` : 'Note (eingegeben)';
-    const lines = [['Name', 'Klasse', valueHeader, 'Note'].map(escapeCsv).join(';')];
-    examRowStudents(cls, exam).forEach(s => {
-        const v = exam.results[s.id];
-        const grade = v !== undefined ? examGradeOf(exam, v) : null;
-        lines.push([s.name, s.classTag || '', v === undefined ? '' : v, grade === null ? '' : grade.toFixed(1)].map(escapeCsv).join(';'));
+    const rows = examRowStudents(cls, exam).filter(s => exam.results[s.id] !== undefined);
+    if (rows.length === 0) { await uiAlert('Noch keine Ergebnisse erfasst — nichts zu exportieren.', 'Prüfung exportieren'); return; }
+    const groups = new Map();
+    rows.forEach(s => {
+        const tag = s.classTag || '';
+        if (!groups.has(tag)) groups.set(tag, []);
+        groups.get(tag).push(s);
     });
-    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
-    downloadBlob(blob, `pruefung-${cls.name}-${exam.date}-${exam.title.replace(/[^\wäöüÄÖÜéèà-]+/g, '_').slice(0, 40)}.csv`);
+    const multi = groups.size > 1;
+    [...groups.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], 'de'))
+        .forEach(([tag, students], i) => {
+            const lines = students
+                .slice().sort((a, b) => a.name.localeCompare(b.name, 'de'))
+                .map(s => `${s.name} ${exam.results[s.id]}`);
+            const tagPart = tag ? `-${safeFilePart(tag)}` : (multi ? '-ohne-kuerzel' : '');
+            const fname = `pruefung-${safeFilePart(exam.title)}-${exam.date}${tagPart}.txt`;
+            // Downloads leicht versetzt anstossen, damit der Browser mehrere Dateien zulässt.
+            setTimeout(() => downloadBlob(new Blob([lines.join('\n') + '\n'], { type: 'text/plain' }), fname), i * 300);
+        });
+    if (multi) showToast(`${groups.size} Textdateien werden heruntergeladen (eine pro Klasse). Der Browser fragt evtl. nach Erlaubnis für mehrere Downloads.`);
 });
 
 // TAB 3: TEAMS
