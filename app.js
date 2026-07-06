@@ -2,7 +2,7 @@
 const {
     WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES, TIME_RE,
     sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
-    bulkParse, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade,
+    bulkParse, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade, computePointsTotal,
     distributeTeams, enforceApart, validateBackup
 } = window.TG;
 
@@ -23,6 +23,9 @@ let statsSort = { key: 'name', dir: 1 };
 // exams: { [classId]: [ { id, title, date, mode:'points'|'grades', maxPoints, results:{ [studentId]: Zahl } } ] }
 let exams = {}, examIdCounter = 1;
 let selExamClassId = null, selExamId = null, examDirty = false;
+// pointsData: { [classId]: { goals: [{id,text,points}], entries: [{id,type:'lektion'|'reset',date,goalIds,note,points}] } }
+let pointsData = {}, pointsIdCounter = 1;
+let selPointsClassId = null;
 
 const GENDER_ICONS = {
     female:  '<i class="fas fa-venus text-pink-500" title="Weiblich" aria-hidden="true"></i><span class="sr-only">weiblich</span>',
@@ -59,6 +62,10 @@ function saveApartPairs() {
 }
 function saveExams() {
     try { localStorage.setItem('tg2_exams', JSON.stringify(exams)); localStorage.setItem('tg2_examId', String(examIdCounter)); } catch(e) { storageWarn(); }
+    scheduleDataFileWrite();
+}
+function savePointsData() {
+    try { localStorage.setItem('tg2_points', JSON.stringify(pointsData)); localStorage.setItem('tg2_pointsId', String(pointsIdCounter)); } catch(e) { storageWarn(); }
     scheduleDataFileWrite();
 }
 function loadStorage() {
@@ -104,6 +111,12 @@ function loadStorage() {
             const parsed = JSON.parse(ex);
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) exams = parsed;
             examIdCounter = parseInt(localStorage.getItem('tg2_examId')||'1',10) || 1;
+        }
+        const pts = localStorage.getItem('tg2_points');
+        if (pts) {
+            const parsed = JSON.parse(pts);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) pointsData = parsed;
+            pointsIdCounter = parseInt(localStorage.getItem('tg2_pointsId')||'1',10) || 1;
         }
     } catch(e) {}
 }
@@ -185,15 +198,19 @@ function snapshotState() {
         classes: structuredClone(classes),
         attendanceData: structuredClone(attendanceData),
         persons: structuredClone(persons),
-        classIdCounter, stuIdCounter, personIdCounter,
+        exams: structuredClone(exams),
+        pointsData: structuredClone(pointsData),
+        classIdCounter, stuIdCounter, personIdCounter, examIdCounter, pointsIdCounter,
         activeClassId, selAttendClassId, personsManual
     };
 }
 function restoreState(snap) {
     classes = snap.classes; attendanceData = snap.attendanceData; persons = snap.persons;
+    exams = snap.exams; pointsData = snap.pointsData;
     classIdCounter = snap.classIdCounter; stuIdCounter = snap.stuIdCounter; personIdCounter = snap.personIdCounter;
+    examIdCounter = snap.examIdCounter; pointsIdCounter = snap.pointsIdCounter;
     activeClassId = snap.activeClassId; selAttendClassId = snap.selAttendClassId; personsManual = snap.personsManual;
-    saveClasses(); saveAttendanceData(); savePersons();
+    saveClasses(); saveAttendanceData(); savePersons(); saveExams(); savePointsData();
     renderClassList(); renderClassDetail(); renderPersonList();
     refreshAttendanceSelect(); refreshStatsSelect();
     const attSel = document.getElementById('attendance-class-select');
@@ -226,7 +243,7 @@ tabButtons.forEach((btn, i) => btn.addEventListener('keydown', e => {
     next.focus(); switchTab(next.dataset.tab);
 }));
 function switchTab(tab) {
-    ['classes','attendance','stats','exams','teams'].forEach(t => document.getElementById('tab-'+t).classList.toggle('hidden', t !== tab));
+    ['classes','attendance','stats','exams','points','teams'].forEach(t => document.getElementById('tab-'+t).classList.toggle('hidden', t !== tab));
     tabButtons.forEach(btn => {
         const active = btn.dataset.tab === tab;
         btn.classList.toggle('active', active);
@@ -236,6 +253,7 @@ function switchTab(tab) {
     if (tab === 'attendance') refreshAttendanceSelect();
     if (tab === 'stats') refreshStatsSelect();
     if (tab === 'exams') refreshExamsSelect();
+    if (tab === 'points') refreshPointsSelect();
     if (tab === 'teams') renderPersonList();
 }
 
@@ -285,6 +303,23 @@ function resetNewClassForm() {
     $newClassName.value = ''; $newClassErr.classList.add('hidden');
     $newClassScheduleRows.innerHTML = '';
     createScheduleRow($newClassScheduleRows);
+    document.getElementById('new-class-points-input').checked = false;
+}
+
+// Standard-Ziele des Punkte-Trackers (aus der Sport-Praxis; jederzeit anpassbar).
+const DEFAULT_POINT_GOALS = [
+    ['Alle starten sofort / gute Startphase', 1],
+    ['Aktives Mitmachen der Mehrheit', 2],
+    ['Fairplay, respektvolle Kommunikation', 2],
+    ['Gute Zusammenarbeit / helfen / motivieren', 2],
+    ['Material schnell und sauber verräumt', 1],
+    ['Exzellentes Verhalten / über Erwartung', 2]
+];
+function seedPointGoals(classId) {
+    if (pointsData[classId] && pointsData[classId].goals && pointsData[classId].goals.length) return;
+    pointsData[classId] = pointsData[classId] || { goals: [], entries: [] };
+    pointsData[classId].goals = DEFAULT_POINT_GOALS.map(([text, points]) => ({ id: pointsIdCounter++, text, points }));
+    savePointsData();
 }
 
 document.getElementById('create-class-btn').addEventListener('click', () => { $newClassForm.classList.remove('hidden'); resetNewClassForm(); $newClassName.focus(); });
@@ -298,8 +333,10 @@ function doCreateClass() {
     if (!name) return;
     if (classes.find(c => c.name.toLowerCase() === name.toLowerCase())) { $newClassErr.textContent = `Eine Klasse "${name}" existiert bereits.`; $newClassErr.classList.remove('hidden'); return; }
     const schedule = readScheduleRows($newClassScheduleRows);
+    const collectsPoints = document.getElementById('new-class-points-input').checked;
     const newId = classIdCounter++;
-    classes.push({ id: newId, name, students: [], formerStudents: [], schedule });
+    classes.push({ id: newId, name, students: [], formerStudents: [], schedule, collectsPoints });
+    if (collectsPoints) seedPointGoals(newId);
     saveClasses();
     // Frischer Start nach dem Anlegen, damit alle Auswahllisten (Anwesenheit,
     // Auswertung, Teams) die neue Klasse sicher kennen; die neue Klasse wird
@@ -372,6 +409,10 @@ async function deleteClass(id) {
         if (activeClassId === id) activeClassId = null;
         if (selAttendClassId === id) { selAttendClassId = null; currentSessionRecords = {}; attendanceDirty = false; updateDirtyHint(); }
         delete attendanceData[id];
+        delete exams[id];
+        delete pointsData[id];
+        if (selPointsClassId === id) selPointsClassId = null;
+        saveExams(); savePointsData();
         saveClasses(); saveAttendanceData(); renderClassList(); renderClassDetail();
     });
 }
@@ -386,9 +427,27 @@ function renderClassDetail() {
     document.getElementById('detail-student-count').textContent = `${cls.students.length} Schüler(in)`;
     document.getElementById('detail-schedule-edit').classList.add('hidden');
     document.getElementById('detail-schedule-display').classList.remove('hidden');
+    renderPointsToggle(cls);
     renderScheduleDisplayBadges(cls);
     renderStudentList(cls);
 }
+
+function renderPointsToggle(cls) {
+    const btn = document.getElementById('toggle-points-btn');
+    const on = cls.collectsPoints === true;
+    btn.textContent = on ? 'Aktiv' : 'Inaktiv';
+    btn.className = `text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${on ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`;
+    btn.title = on ? 'Punkte-Tracker deaktivieren' : 'Punkte-Tracker aktivieren';
+    btn.setAttribute('aria-pressed', String(on));
+}
+document.getElementById('toggle-points-btn').addEventListener('click', () => {
+    const cls = classes.find(c => c.id === activeClassId);
+    if (!cls) return;
+    cls.collectsPoints = cls.collectsPoints !== true;
+    if (cls.collectsPoints) seedPointGoals(cls.id);
+    saveClasses();
+    renderPointsToggle(cls);
+});
 
 function renderScheduleDisplayBadges(cls) {
     const disp = document.getElementById('detail-schedule-display');
@@ -1451,6 +1510,237 @@ document.getElementById('export-exam-btn').addEventListener('click', async () =>
     if (multi) showToast(`${groups.size} Textdateien werden heruntergeladen (eine pro Klasse). Der Browser fragt evtl. nach Erlaubnis für mehrere Downloads.`);
 });
 
+// TAB: PUNKTE (Klassenpunkte-Tracker fuer Bonusstunden)
+const $pointsSelect = document.getElementById('points-class-select');
+const $pointsDate = document.getElementById('points-date-input');
+
+function getPointsData(classId) {
+    if (!pointsData[classId]) pointsData[classId] = { goals: [], entries: [] };
+    if (!Array.isArray(pointsData[classId].goals)) pointsData[classId].goals = [];
+    if (!Array.isArray(pointsData[classId].entries)) pointsData[classId].entries = [];
+    return pointsData[classId];
+}
+
+function refreshPointsSelect() {
+    const prev = $pointsSelect.value;
+    $pointsSelect.innerHTML = '<option value="">-- Klasse wählen --</option>';
+    classes.filter(c => c.collectsPoints === true).forEach(cls => {
+        const opt = document.createElement('option');
+        opt.value = String(cls.id); opt.textContent = cls.name;
+        $pointsSelect.appendChild(opt);
+    });
+    if (prev && [...$pointsSelect.options].some(o => o.value === prev)) $pointsSelect.value = prev;
+    else if (selPointsClassId !== null && ![...$pointsSelect.options].some(o => o.value === String(selPointsClassId))) {
+        selPointsClassId = null;
+        document.getElementById('points-empty').classList.remove('hidden');
+        document.getElementById('points-content').classList.add('hidden');
+    }
+}
+
+$pointsSelect.addEventListener('change', function() {
+    const id = parseInt(this.value, 10);
+    const emptyEl = document.getElementById('points-empty');
+    const contentEl = document.getElementById('points-content');
+    if (isNaN(id)) {
+        selPointsClassId = null;
+        emptyEl.classList.remove('hidden'); contentEl.classList.add('hidden');
+        return;
+    }
+    selPointsClassId = id;
+    emptyEl.classList.add('hidden'); contentEl.classList.remove('hidden');
+    if (!$pointsDate.value) $pointsDate.value = todayStr();
+    renderPointsTab();
+});
+
+function renderPointsTab() {
+    const cls = classes.find(c => c.id === selPointsClassId);
+    if (!cls) return;
+    const pd = getPointsData(cls.id);
+    const total = computePointsTotal(pd.entries);
+    document.getElementById('points-total').textContent = total;
+    const lektionen = pd.entries.filter(e => e.type !== 'reset').length;
+    const lastReset = pd.entries.filter(e => e.type === 'reset').slice(-1)[0];
+    document.getElementById('points-total-meta').textContent =
+        `${lektionen} Lektion(en) erfasst${lastReset ? ` · zuletzt eingelöst am ${formatDateDisplay(lastReset.date)}` : ''}`;
+    renderPointsGoalCheckboxes(pd);
+    renderPointsGoalsEditor(pd);
+    renderPointsEntries(pd);
+    updateLektionSum(pd);
+}
+
+function renderPointsGoalCheckboxes(pd) {
+    const container = document.getElementById('points-goal-checkboxes');
+    container.innerHTML = '';
+    if (pd.goals.length === 0) {
+        const p = document.createElement('p');
+        p.className = 'text-xs text-gray-400';
+        p.textContent = 'Keine Ziele definiert — unten unter "Ziele & Punktwerte bearbeiten" hinzufügen.';
+        container.appendChild(p);
+        return;
+    }
+    pd.goals.forEach(goal => {
+        const label = document.createElement('label');
+        label.className = 'flex items-center gap-2 text-sm cursor-pointer bg-white rounded-md border border-gray-200 px-2.5 py-1.5 hover:border-amber-300 transition-colors';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'rounded text-amber-500 h-4 w-4 points-goal-cb';
+        cb.dataset.goalId = String(goal.id);
+        cb.dataset.points = String(goal.points);
+        cb.addEventListener('change', () => updateLektionSum(pd));
+        const text = document.createElement('span');
+        text.className = 'flex-1 text-gray-700';
+        text.textContent = goal.text;
+        const badge = document.createElement('span');
+        badge.className = 'text-xs font-bold text-amber-600 flex-shrink-0';
+        badge.textContent = `+${goal.points}`;
+        label.appendChild(cb); label.appendChild(text); label.appendChild(badge);
+        container.appendChild(label);
+    });
+}
+
+function updateLektionSum(pd) {
+    let sum = 0;
+    document.querySelectorAll('#points-goal-checkboxes .points-goal-cb:checked').forEach(cb => { sum += parseInt(cb.dataset.points, 10) || 0; });
+    document.getElementById('points-lektion-sum').textContent = sum;
+}
+
+document.getElementById('points-save-lektion-btn').addEventListener('click', async () => {
+    const cls = classes.find(c => c.id === selPointsClassId);
+    if (!cls) return;
+    const pd = getPointsData(cls.id);
+    const date = $pointsDate.value || todayStr();
+    const checked = [...document.querySelectorAll('#points-goal-checkboxes .points-goal-cb:checked')];
+    const goalIds = checked.map(cb => parseInt(cb.dataset.goalId, 10));
+    const points = checked.reduce((sum, cb) => sum + (parseInt(cb.dataset.points, 10) || 0), 0);
+    if (goalIds.length === 0) {
+        const ok = await uiConfirm('Kein Ziel angehakt — Lektion mit 0 Punkten speichern?', { okLabel: 'Speichern' });
+        if (!ok) return;
+    }
+    const note = document.getElementById('points-note-input').value.trim().slice(0, 200);
+    pd.entries.push({ id: pointsIdCounter++, type: 'lektion', date, goalIds, note, points });
+    savePointsData();
+    document.getElementById('points-note-input').value = '';
+    renderPointsTab();
+    showToast(`Lektion gespeichert: +${points} Punkte.`);
+});
+
+document.getElementById('points-reset-btn').addEventListener('click', async () => {
+    const cls = classes.find(c => c.id === selPointsClassId);
+    if (!cls) return;
+    const pd = getPointsData(cls.id);
+    const total = computePointsTotal(pd.entries);
+    const ok = await uiConfirm(`Punktestand von ${total} Punkten einlösen und auf 0 zurücksetzen? Der Verlauf bleibt erhalten.`, { title: 'Punkte einlösen', okLabel: 'Einlösen' });
+    if (!ok) return;
+    pd.entries.push({ id: pointsIdCounter++, type: 'reset', date: todayStr() });
+    savePointsData();
+    renderPointsTab();
+});
+
+// Ziele-Editor: Text und Punktwert (1 oder 2) pro Ziel anpassen, Ziele ergaenzen/entfernen.
+document.getElementById('points-goals-toggle-btn').addEventListener('click', () => document.getElementById('points-goals-editor').classList.toggle('hidden'));
+
+function renderPointsGoalsEditor(pd) {
+    const container = document.getElementById('points-goals-rows');
+    container.innerHTML = '';
+    pd.goals.forEach(goal => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-1.5';
+        const input = document.createElement('input');
+        input.type = 'text'; input.maxLength = 120; input.value = goal.text;
+        input.className = 'flex-1 border rounded-md p-1.5 text-xs focus:border-indigo-500 focus:outline-none';
+        input.addEventListener('change', () => {
+            const t = input.value.trim().slice(0, 120);
+            if (!t) { input.value = goal.text; return; }
+            goal.text = t; savePointsData(); renderPointsGoalCheckboxes(pd);
+        });
+        const sel = document.createElement('select');
+        sel.className = 'border rounded-md p-1.5 text-xs bg-white';
+        sel.innerHTML = '<option value="1">1 Punkt</option><option value="2">2 Punkte</option>';
+        sel.value = String(goal.points === 2 ? 2 : 1);
+        sel.addEventListener('change', () => {
+            goal.points = parseInt(sel.value, 10) === 2 ? 2 : 1;
+            savePointsData(); renderPointsGoalCheckboxes(pd); updateLektionSum(pd);
+        });
+        const rm = document.createElement('button');
+        rm.className = 'text-gray-300 hover:text-red-500 px-1';
+        rm.innerHTML = '<i class="fas fa-times text-xs" aria-hidden="true"></i>';
+        rm.title = 'Ziel entfernen (bereits erfasste Lektionen behalten ihre Punkte)';
+        rm.addEventListener('click', () => {
+            pd.goals = pd.goals.filter(g => g.id !== goal.id);
+            savePointsData(); renderPointsGoalsEditor(pd); renderPointsGoalCheckboxes(pd); updateLektionSum(pd);
+        });
+        row.appendChild(input); row.appendChild(sel); row.appendChild(rm);
+        container.appendChild(row);
+    });
+}
+
+document.getElementById('points-add-goal-btn').addEventListener('click', () => {
+    const cls = classes.find(c => c.id === selPointsClassId);
+    if (!cls) return;
+    const pd = getPointsData(cls.id);
+    const input = document.getElementById('points-new-goal-input');
+    const text = input.value.trim().slice(0, 120);
+    if (!text) return;
+    const points = parseInt(document.getElementById('points-new-goal-points').value, 10) === 2 ? 2 : 1;
+    pd.goals.push({ id: pointsIdCounter++, text, points });
+    savePointsData();
+    input.value = '';
+    renderPointsGoalsEditor(pd); renderPointsGoalCheckboxes(pd);
+});
+
+function renderPointsEntries(pd) {
+    const list = document.getElementById('points-entries-list');
+    list.innerHTML = '';
+    if (pd.entries.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'text-gray-400 text-xs py-2';
+        li.textContent = 'Noch keine Lektionen erfasst.';
+        list.appendChild(li);
+        return;
+    }
+    const goalById = new Map(pd.goals.map(g => [g.id, g]));
+    pd.entries.slice().reverse().forEach(entry => {
+        const li = document.createElement('li');
+        if (entry.type === 'reset') {
+            li.className = 'flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-800';
+            const span = document.createElement('span');
+            span.className = 'text-xs font-medium';
+            span.textContent = `${formatDateDisplay(entry.date)} — Punkte eingelöst (Stand auf 0 gesetzt)`;
+            li.appendChild(span);
+        } else {
+            li.className = 'bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-sm';
+            const top = document.createElement('div');
+            top.className = 'flex items-center justify-between gap-2';
+            const left = document.createElement('span');
+            left.className = 'text-sm';
+            const dateB = document.createElement('span'); dateB.className = 'font-medium'; dateB.textContent = formatDateDisplay(entry.date);
+            const ptsB = document.createElement('span'); ptsB.className = 'ml-2 text-xs font-bold text-amber-600'; ptsB.textContent = `+${entry.points}`;
+            left.appendChild(dateB); left.appendChild(ptsB);
+            top.appendChild(left);
+            const delBtn = document.createElement('button');
+            delBtn.className = 'text-gray-300 hover:text-red-500 text-xs p-1';
+            delBtn.innerHTML = '<i class="fas fa-trash-alt" aria-hidden="true"></i>';
+            delBtn.setAttribute('aria-label', `Lektion vom ${formatDateDisplay(entry.date)} löschen`);
+            top.appendChild(delBtn);
+            li.appendChild(top);
+            const goalsTxt = (entry.goalIds || []).map(gid => (goalById.get(gid) || {}).text).filter(Boolean).join(', ');
+            if (goalsTxt || entry.note) {
+                const sub = document.createElement('p');
+                sub.className = 'text-xs text-gray-400 mt-0.5';
+                sub.textContent = [goalsTxt, entry.note].filter(Boolean).join(' — ');
+                li.appendChild(sub);
+            }
+            delBtn.addEventListener('click', async () => {
+                const ok = await uiConfirm(`Lektion vom ${formatDateDisplay(entry.date)} (+${entry.points} Punkte) löschen?`, { okLabel: 'Löschen', danger: true });
+                if (!ok) return;
+                pd.entries = pd.entries.filter(e => e.id !== entry.id);
+                savePointsData(); renderPointsTab();
+            });
+        }
+        list.appendChild(li);
+    });
+}
+
 // TAB 3: TEAMS
 async function addPerson(name, gender, sporty = false, { confirmDuplicate = false } = {}) {
     if (persons.find(p => p.name.toLowerCase() === name.toLowerCase())) {
@@ -1735,7 +2025,8 @@ function buildBackupObject() {
         attendanceData,
         persons, personIdCounter,
         apartPairs,
-        exams, examIdCounter
+        exams, examIdCounter,
+        pointsData, pointsIdCounter
     };
 }
 
@@ -1798,11 +2089,14 @@ function applyRestoredData(result) {
     apartPairs = result.apartPairs || [];
     exams = result.exams || {};
     examIdCounter = result.examIdCounter || 1;
+    pointsData = result.pointsData || {};
+    pointsIdCounter = result.pointsIdCounter || 1;
+    selPointsClassId = null;
     personsManual = false;
     activeClassId = null; selAttendClassId = null; currentSessionRecords = {};
     selExamClassId = null; selExamId = null; examDirty = false;
     attendanceDirty = false; updateDirtyHint();
-    saveClasses(); saveAttendanceData(); savePersons(); saveApartPairs(); saveExams();
+    saveClasses(); saveAttendanceData(); savePersons(); saveApartPairs(); saveExams(); savePointsData();
     renderClassList(); renderClassDetail(); renderPersonList();
     $attendanceSelect.value = '';
     document.getElementById('attendance-empty').classList.remove('hidden');

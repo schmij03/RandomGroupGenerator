@@ -49,6 +49,10 @@
                 id="tab-btn-exams" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-exams">
             <i class="fas fa-file-pen" aria-hidden="true"></i><span class="hidden sm:inline">Prüfungen</span><span class="sr-only sm:hidden">Prüfungen</span>
         </button>
+        <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="points"
+                id="tab-btn-points" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-points">
+            <i class="fas fa-star" aria-hidden="true"></i><span class="hidden sm:inline">Punkte</span><span class="sr-only sm:hidden">Punkte</span>
+        </button>
         <button class="tab-btn flex-1 py-3 px-2 text-sm text-indigo-700 flex items-center justify-center gap-2" data-tab="teams"
                 id="tab-btn-teams" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-teams">
             <i class="fas fa-users" aria-hidden="true"></i><span class="hidden sm:inline">Teams</span><span class="sr-only sm:hidden">Teams</span>
@@ -111,6 +115,10 @@ Sport-Gruppe A;Kim;d;s;7a</pre>
                             <i class="fas fa-plus" aria-hidden="true"></i> Termin hinzufügen
                         </button>
                     </div>
+                    <label class="mt-2 flex items-center gap-2 text-sm cursor-pointer text-amber-800">
+                        <input type="checkbox" id="new-class-points-input" class="rounded text-amber-500 h-4 w-4">
+                        <span><i class="fas fa-star text-amber-400 mr-1" aria-hidden="true"></i>Klasse sammelt Punkte (Bonusstunden-Tracker, z.B. Sport)</span>
+                    </label>
                     <p id="new-class-error" class="text-red-500 text-xs hidden mt-1"></p>
                 </div>
                 <ul id="class-list" class="space-y-2">
@@ -133,6 +141,10 @@ Sport-Gruppe A;Kim;d;s;7a</pre>
                     <div class="flex items-center justify-between mb-2 border-b pb-2">
                         <h2 class="text-lg font-semibold text-indigo-700" id="detail-class-name"></h2>
                         <span class="text-xs text-gray-400" id="detail-student-count"></span>
+                    </div>
+                    <div class="mb-2 flex items-center justify-between p-2.5 bg-amber-50 rounded-lg border border-amber-100">
+                        <span class="text-xs font-medium text-amber-800"><i class="fas fa-star text-amber-400 mr-1" aria-hidden="true"></i>Punkte-Tracker (Bonusstunden)</span>
+                        <button id="toggle-points-btn" class="text-xs px-2 py-1 rounded-md transition-colors" aria-pressed="false"></button>
                     </div>
                     <div class="mb-3 p-2.5 bg-indigo-50 rounded-lg border border-indigo-100">
                         <div class="flex items-center justify-between mb-1">
@@ -452,6 +464,91 @@ Sport-Gruppe A;Kim;d;s;7a</pre>
                             <div id="exam-stats-rows" class="space-y-1 text-sm"></div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: PUNKTE (Klassenpunkte-Tracker) -->
+    <div id="tab-points" class="hidden p-5 md:p-8" role="tabpanel" aria-labelledby="tab-btn-points">
+        <div class="mb-6">
+            <label for="points-class-select" class="block text-sm font-medium text-gray-700 mb-1">Klasse auswählen</label>
+            <select id="points-class-select"
+                class="w-full sm:w-72 border rounded-lg p-2.5 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-sm">
+                <option value="">-- Klasse wählen --</option>
+            </select>
+            <p class="text-xs text-gray-400 mt-1">Nur Klassen mit aktiviertem Punkte-Tracker (einstellbar beim Anlegen oder in der Klassen-Detailansicht).</p>
+        </div>
+        <div id="points-empty" class="text-center text-gray-300 py-16">
+            <i class="fas fa-star text-5xl mb-3 block opacity-40" aria-hidden="true"></i>
+            <p class="text-sm">Wähle eine Klasse mit Punkte-Tracker aus.</p>
+        </div>
+        <div id="points-content" class="hidden">
+            <!-- Punktestand -->
+            <div class="bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-xl p-4 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                    <div class="text-amber-800">
+                        <span class="text-4xl font-extrabold" id="points-total">0</span>
+                        <span class="text-sm font-medium"> Punkte</span>
+                    </div>
+                    <p class="text-xs text-amber-600 mt-0.5" id="points-total-meta"></p>
+                </div>
+                <button id="points-reset-btn" class="text-xs bg-white border border-amber-300 hover:bg-amber-100 text-amber-800 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5">
+                    <i class="fas fa-gift" aria-hidden="true"></i> Punkte einlösen (auf 0 zurücksetzen)
+                </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Lektion erfassen -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-600 mb-2"><i class="fas fa-clipboard-check mr-1" aria-hidden="true"></i>Lektion erfassen</h3>
+                    <div class="p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
+                        <div>
+                            <label for="points-date-input" class="block text-xs font-medium text-gray-500 mb-1">Datum</label>
+                            <input type="date" id="points-date-input"
+                                class="w-full sm:w-48 border rounded-md p-2 text-sm bg-white focus:border-indigo-500 focus:outline-none">
+                        </div>
+                        <div id="points-goal-checkboxes" class="space-y-1.5"></div>
+                        <div>
+                            <label for="points-note-input" class="block text-xs font-medium text-gray-500 mb-1">Bemerkung (optional)</label>
+                            <input type="text" id="points-note-input" maxlength="200" placeholder="z.B. sehr gute Stunde"
+                                class="w-full border rounded-md p-2 text-sm focus:border-indigo-500 focus:outline-none">
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-500">Punkte dieser Lektion: <span id="points-lektion-sum" class="font-bold text-amber-700">0</span></span>
+                            <button id="points-save-lektion-btn" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors flex items-center gap-2">
+                                <i class="fas fa-save" aria-hidden="true"></i> Lektion speichern
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Ziele bearbeiten -->
+                    <div class="mt-4">
+                        <button id="points-goals-toggle-btn" class="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
+                            <i class="fas fa-sliders" aria-hidden="true"></i> Ziele &amp; Punktwerte bearbeiten
+                        </button>
+                        <div id="points-goals-editor" class="hidden mt-2 p-3 bg-white rounded-lg border border-indigo-100 space-y-2">
+                            <div id="points-goals-rows" class="space-y-1.5"></div>
+                            <div class="flex gap-2">
+                                <input type="text" id="points-new-goal-input" maxlength="120" placeholder="Neues Ziel…"
+                                    class="flex-1 border rounded-md p-1.5 text-xs focus:border-indigo-500 focus:outline-none">
+                                <select id="points-new-goal-points" class="border rounded-md p-1.5 text-xs bg-white">
+                                    <option value="1">1 Punkt</option>
+                                    <option value="2">2 Punkte</option>
+                                </select>
+                                <button id="points-add-goal-btn" class="bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2.5 py-1.5 rounded text-xs font-medium">
+                                    <i class="fas fa-plus" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-400">Punktwert-Änderungen gelten für künftige Lektionen; bereits erfasste behalten ihre Punkte.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Verlauf -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-600 mb-2"><i class="fas fa-history mr-1" aria-hidden="true"></i>Verlauf</h3>
+                    <ul id="points-entries-list" class="space-y-1.5 text-sm"></ul>
                 </div>
             </div>
         </div>

@@ -136,6 +136,17 @@
         return { rows, invalid };
     }
 
+    // KLASSENPUNKTE — Punktestand = Summe der Lektions-Punkte seit dem letzten Reset
+    // (Reset = Punkte eingelöst, z.B. für eine Bonusstunde).
+    function computePointsTotal(entries) {
+        let total = 0;
+        for (const e of (entries || [])) {
+            if (e.type === 'reset') total = 0;
+            else total += (typeof e.points === 'number' && isFinite(e.points) && e.points > 0) ? e.points : 0;
+        }
+        return total;
+    }
+
     // Schweizer Notenformel: Note = 5 × Punkte/Max + 1, begrenzt auf 1–6, auf Zehntel gerundet.
     function pointsToGrade(points, maxPoints) {
         if (typeof points !== 'number' || !isFinite(points) || typeof maxPoints !== 'number' || !(maxPoints > 0)) return null;
@@ -265,7 +276,7 @@
             const schedule = (Array.isArray(cls.schedule) ? cls.schedule : [])
                 .filter(e => e && Number.isInteger(e.weekday) && e.weekday >= 0 && e.weekday <= 6 && typeof e.time === 'string' && TIME_RE.test(e.time))
                 .map(e => ({ weekday: e.weekday, time: e.time }));
-            cleanClasses.push({ id, name, students, formerStudents, schedule });
+            cleanClasses.push({ id, name, students, formerStudents, schedule, collectsPoints: cls.collectsPoints === true });
             if (id > maxClassId) maxClassId = id;
         }
         const cleanAttendance = {};
@@ -332,8 +343,41 @@
                 if (cleanList.length) cleanExams[classIdKey] = cleanList;
             }
         }
+        // Klassenpunkte: { [classId]: { goals: [{id,text,points}], entries: [{id,type,date,goalIds,note,points}] } }
+        const cleanPoints = {};
+        let maxPointsId = 0;
+        if (data.pointsData && typeof data.pointsData === 'object' && !Array.isArray(data.pointsData)) {
+            for (const [classIdKey, pd] of Object.entries(data.pointsData)) {
+                if (!cleanClasses.find(c => String(c.id) === classIdKey)) continue;
+                if (!pd || typeof pd !== 'object') continue;
+                const goals = [];
+                for (const g of (Array.isArray(pd.goals) ? pd.goals : [])) {
+                    if (!g || typeof g !== 'object' || !Number.isInteger(g.id) || g.id <= 0) continue;
+                    const text = typeof g.text === 'string' ? g.text.trim().slice(0, 120) : '';
+                    if (!text) continue;
+                    const points = Number.isInteger(g.points) && g.points >= 1 && g.points <= 10 ? g.points : 1;
+                    goals.push({ id: g.id, text, points });
+                    if (g.id > maxPointsId) maxPointsId = g.id;
+                }
+                const entries = [];
+                for (const e of (Array.isArray(pd.entries) ? pd.entries : [])) {
+                    if (!e || typeof e !== 'object' || !Number.isInteger(e.id) || e.id <= 0) continue;
+                    if (typeof e.date !== 'string' || !DATE_RE.test(e.date)) continue;
+                    if (e.type === 'reset') { entries.push({ id: e.id, type: 'reset', date: e.date }); }
+                    else {
+                        const points = typeof e.points === 'number' && isFinite(e.points) && e.points >= 0 ? e.points : 0;
+                        const goalIds = (Array.isArray(e.goalIds) ? e.goalIds : []).filter(x => Number.isInteger(x));
+                        entries.push({ id: e.id, type: 'lektion', date: e.date, goalIds, note: typeof e.note === 'string' ? e.note.slice(0, 200) : '', points });
+                    }
+                    if (e.id > maxPointsId) maxPointsId = e.id;
+                }
+                if (goals.length || entries.length) cleanPoints[classIdKey] = { goals, entries };
+            }
+        }
         return {
             classes: cleanClasses,
+            pointsData: cleanPoints,
+            pointsIdCounter: Math.max(Number.isInteger(data.pointsIdCounter) ? data.pointsIdCounter : 1, maxPointsId + 1),
             classIdCounter: Math.max(Number.isInteger(data.classIdCounter) ? data.classIdCounter : 1, maxClassId + 1),
             stuIdCounter: Math.max(Number.isInteger(data.stuIdCounter) ? data.stuIdCounter : 1, maxStuId + 1),
             attendanceData: cleanAttendance,
@@ -349,7 +393,7 @@
     return {
         DATE_RE, TIME_RE, WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES,
         sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
-        bulkParse, isCsvHeader, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade,
+        bulkParse, isCsvHeader, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade, computePointsTotal,
         shuffleArray, distributeTeams, enforceApart,
         validateBackup
     };
