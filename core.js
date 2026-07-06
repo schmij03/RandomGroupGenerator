@@ -136,15 +136,29 @@
         return { rows, invalid };
     }
 
-    // KLASSENPUNKTE — Punktestand = Summe der Lektions-Punkte seit dem letzten Reset
-    // (Reset = Punkte eingelöst, z.B. für eine Bonusstunde).
-    function computePointsTotal(entries) {
+    // KLASSENPUNKTE — Punktestand = Summe der Punkte seit dem letzten Reset
+    // (Reset = Punkte eingelöst, z.B. für eine Bonusstunde). Neben Lektionen gibt es
+    // manuelle Anpassungen (type 'adjust', auch negativ, z.B. Startpunktestand);
+    // der Stand fällt nie unter 0. Liefert den Verlauf pro Eintrag (für den Graphen).
+    function computePointsSeries(entries) {
+        const out = [];
         let total = 0;
         for (const e of (entries || [])) {
+            let delta = 0;
             if (e.type === 'reset') total = 0;
-            else total += (typeof e.points === 'number' && isFinite(e.points) && e.points > 0) ? e.points : 0;
+            else {
+                const p = (typeof e.points === 'number' && isFinite(e.points)) ? e.points : 0;
+                delta = e.type === 'adjust' ? p : Math.max(0, p);
+                total += delta;
+                if (total < 0) total = 0;
+            }
+            out.push({ id: e.id, type: e.type || 'lektion', date: e.date, delta, total, note: e.note || '' });
         }
-        return total;
+        return out;
+    }
+    function computePointsTotal(entries) {
+        const series = computePointsSeries(entries);
+        return series.length ? series[series.length - 1].total : 0;
     }
 
     // Schweizer Notenformel: Note = 5 × Punkte/Max + 1, begrenzt auf 1–6, auf Zehntel gerundet.
@@ -364,6 +378,11 @@
                     if (!e || typeof e !== 'object' || !Number.isInteger(e.id) || e.id <= 0) continue;
                     if (typeof e.date !== 'string' || !DATE_RE.test(e.date)) continue;
                     if (e.type === 'reset') { entries.push({ id: e.id, type: 'reset', date: e.date }); }
+                    else if (e.type === 'adjust') {
+                        let points = typeof e.points === 'number' && isFinite(e.points) ? e.points : 0;
+                        points = Math.max(-9999, Math.min(9999, points));
+                        entries.push({ id: e.id, type: 'adjust', date: e.date, note: typeof e.note === 'string' ? e.note.slice(0, 200) : '', points });
+                    }
                     else {
                         const points = typeof e.points === 'number' && isFinite(e.points) && e.points >= 0 ? e.points : 0;
                         const goalIds = (Array.isArray(e.goalIds) ? e.goalIds : []).filter(x => Number.isInteger(x));
@@ -393,7 +412,7 @@
     return {
         DATE_RE, TIME_RE, WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES,
         sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
-        bulkParse, isCsvHeader, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade, computePointsTotal,
+        bulkParse, isCsvHeader, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade, computePointsTotal, computePointsSeries,
         shuffleArray, distributeTeams, enforceApart,
         validateBackup
     };

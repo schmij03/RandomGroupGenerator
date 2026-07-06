@@ -2,7 +2,7 @@
 const {
     WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES, TIME_RE,
     sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
-    bulkParse, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade, computePointsTotal,
+    bulkParse, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade, computePointsTotal, computePointsSeries,
     distributeTeams, enforceApart, validateBackup
 } = window.TG;
 
@@ -1558,13 +1558,14 @@ function renderPointsTab() {
     const pd = getPointsData(cls.id);
     const total = computePointsTotal(pd.entries);
     document.getElementById('points-total').textContent = total;
-    const lektionen = pd.entries.filter(e => e.type !== 'reset').length;
+    const lektionen = pd.entries.filter(e => e.type !== 'reset' && e.type !== 'adjust').length;
     const lastReset = pd.entries.filter(e => e.type === 'reset').slice(-1)[0];
     document.getElementById('points-total-meta').textContent =
         `${lektionen} Lektion(en) erfasst${lastReset ? ` · zuletzt eingelöst am ${formatDateDisplay(lastReset.date)}` : ''}`;
     renderPointsGoalCheckboxes(pd);
     renderPointsGoalsEditor(pd);
     renderPointsEntries(pd);
+    renderPointsChart(pd);
     updateLektionSum(pd);
 }
 
@@ -1635,6 +1636,116 @@ document.getElementById('points-reset-btn').addEventListener('click', async () =
     savePointsData();
     renderPointsTab();
 });
+
+// Pauschale Anpassung: Punkte direkt hinzufügen oder abziehen — z.B. Startpunktestand
+// beim Umstieg vom alten Excel-Tracker. Der Stand fällt dabei nie unter 0.
+document.getElementById('points-adjust-btn').addEventListener('click', async () => {
+    const cls = classes.find(c => c.id === selPointsClassId);
+    if (!cls) return;
+    const pd = getPointsData(cls.id);
+    const raw = await uiPrompt('Punkte hinzufügen oder abziehen (z.B. 30 für Startpunktestand, -5 für Abzug):', {
+        title: 'Punkte anpassen', placeholder: 'z.B. 30 oder -5', okLabel: 'Weiter'
+    });
+    if (raw === null) return;
+    const amount = parseInt(String(raw).trim().replace(',', '.'), 10);
+    if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 9999) {
+        await uiAlert('Bitte eine ganze Zahl ungleich 0 eingeben (z.B. 30 oder -5).', 'Punkte anpassen');
+        return;
+    }
+    const note = await uiPrompt('Bemerkung (optional, z.B. "Übertrag aus altem Tracker"):', {
+        title: 'Punkte anpassen', placeholder: 'Bemerkung', okLabel: 'Speichern'
+    });
+    if (note === null) return;
+    pd.entries.push({ id: pointsIdCounter++, type: 'adjust', date: todayStr(), note: note.trim().slice(0, 200), points: amount });
+    savePointsData();
+    renderPointsTab();
+    showToast(`Punktestand angepasst: ${amount > 0 ? '+' : ''}${amount} Punkte.`);
+});
+
+// PUNKTEVERLAUF-GRAPH — schlichte SVG-Linie (eine Serie, Amber), Tooltip pro Punkt.
+// Der Verlauf (Liste rechts) dient zugleich als Tabellen-Ansicht der gleichen Daten.
+const CHART_COLOR = '#d97706'; // amber-600, validiert gegen hellen Hintergrund
+function svgEl(tag, attrs) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, String(v));
+    return el;
+}
+function renderPointsChart(pd) {
+    const container = document.getElementById('points-chart');
+    container.innerHTML = '';
+    const series = computePointsSeries(pd.entries);
+    if (series.length < 2) {
+        const p = document.createElement('p');
+        p.className = 'text-xs text-gray-400 py-4 text-center';
+        p.textContent = 'Der Verlauf erscheint, sobald mindestens zwei Einträge erfasst sind.';
+        container.appendChild(p);
+        return;
+    }
+    const W = 640, H = 190, padL = 34, padR = 12, padT = 12, padB = 26;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const maxTotal = Math.max(...series.map(s => s.total), 1);
+    // Y-Maximum auf runden Wert aufziehen (5er-/10er-Schritte)
+    const step = maxTotal <= 10 ? 2 : maxTotal <= 25 ? 5 : maxTotal <= 60 ? 10 : maxTotal <= 120 ? 20 : 50;
+    const yMax = Math.ceil(maxTotal / step) * step;
+    const x = i => padL + (series.length === 1 ? plotW / 2 : (i / (series.length - 1)) * plotW);
+    const y = v => padT + plotH - (v / yMax) * plotH;
+
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: 'auto', role: 'img' });
+    svg.setAttribute('aria-label', 'Punkteverlauf über die erfassten Einträge');
+
+    // dezente horizontale Gitterlinien + Y-Beschriftung
+    for (let v = 0; v <= yMax; v += step) {
+        svg.appendChild(svgEl('line', { x1: padL, y1: y(v), x2: W - padR, y2: y(v), stroke: '#e5e7eb', 'stroke-width': 1 }));
+        const lbl = svgEl('text', { x: padL - 6, y: y(v) + 3, 'text-anchor': 'end', 'font-size': 10, fill: '#9ca3af' });
+        lbl.textContent = String(v);
+        svg.appendChild(lbl);
+    }
+    // X-Beschriftung: erstes/letztes Datum plus wenige Zwischenschritte
+    const tickEvery = Math.max(1, Math.ceil(series.length / 6));
+    series.forEach((s, i) => {
+        if (i !== 0 && i !== series.length - 1 && i % tickEvery !== 0) return;
+        const lbl = svgEl('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', 'font-size': 10, fill: '#9ca3af' });
+        lbl.textContent = formatDateDisplay(s.date).slice(0, 6); // TT.MM.
+        svg.appendChild(lbl);
+    });
+
+    // Linie
+    const path = series.map((s, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(s.total).toFixed(1)}`).join(' ');
+    svg.appendChild(svgEl('path', { d: path, fill: 'none', stroke: CHART_COLOR, 'stroke-width': 2, 'stroke-linejoin': 'round' }));
+
+    // Tooltip (HTML, über dem SVG positioniert)
+    const tooltip = document.createElement('div');
+    tooltip.className = 'hidden absolute z-10 bg-gray-800 text-white text-xs rounded-md px-2 py-1 pointer-events-none shadow-lg';
+    container.appendChild(tooltip);
+
+    // Marker + grosszügige Hover-Flächen
+    series.forEach((s, i) => {
+        const cx = x(i), cy = y(s.total);
+        const isReset = s.type === 'reset';
+        svg.appendChild(svgEl('circle', {
+            cx, cy, r: 3.5,
+            fill: isReset ? '#ffffff' : CHART_COLOR,
+            stroke: CHART_COLOR, 'stroke-width': isReset ? 2 : 0
+        }));
+        const hit = svgEl('circle', { cx, cy, r: 11, fill: 'transparent' });
+        hit.style.cursor = 'pointer';
+        hit.addEventListener('mouseenter', () => {
+            const kind = isReset ? 'Eingelöst — Stand 0' : s.type === 'adjust'
+                ? `Anpassung ${s.delta > 0 ? '+' : ''}${s.delta} → ${s.total} Punkte`
+                : `+${s.delta} → ${s.total} Punkte`;
+            tooltip.textContent = `${formatDateDisplay(s.date)}: ${kind}${s.note ? ` (${s.note})` : ''}`;
+            tooltip.classList.remove('hidden');
+            const rect = container.getBoundingClientRect();
+            const sx = rect.width / W;
+            tooltip.style.left = Math.min(Math.max(cx * sx - 40, 0), rect.width - 140) + 'px';
+            tooltip.style.top = Math.max(cy * sx - 30, 0) + 'px';
+        });
+        hit.addEventListener('mouseleave', () => tooltip.classList.add('hidden'));
+        svg.appendChild(hit);
+    });
+
+    container.appendChild(svg);
+}
 
 // Ziele-Editor: Text und Punktwert (1 oder 2) pro Ziel anpassen, Ziele ergaenzen/entfernen.
 document.getElementById('points-goals-toggle-btn').addEventListener('click', () => document.getElementById('points-goals-editor').classList.toggle('hidden'));
@@ -1708,14 +1819,23 @@ function renderPointsEntries(pd) {
             span.textContent = `${formatDateDisplay(entry.date)} — Punkte eingelöst (Stand auf 0 gesetzt)`;
             li.appendChild(span);
         } else {
-            li.className = 'bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-sm';
+            const isAdjust = entry.type === 'adjust';
+            li.className = `bg-white border rounded-lg px-3 py-2 shadow-sm ${isAdjust ? 'border-amber-200' : 'border-gray-100'}`;
             const top = document.createElement('div');
             top.className = 'flex items-center justify-between gap-2';
             const left = document.createElement('span');
             left.className = 'text-sm';
             const dateB = document.createElement('span'); dateB.className = 'font-medium'; dateB.textContent = formatDateDisplay(entry.date);
-            const ptsB = document.createElement('span'); ptsB.className = 'ml-2 text-xs font-bold text-amber-600'; ptsB.textContent = `+${entry.points}`;
+            const ptsB = document.createElement('span');
+            ptsB.className = `ml-2 text-xs font-bold ${entry.points < 0 ? 'text-red-500' : 'text-amber-600'}`;
+            ptsB.textContent = `${entry.points > 0 ? '+' : ''}${entry.points}`;
             left.appendChild(dateB); left.appendChild(ptsB);
+            if (isAdjust) {
+                const tag = document.createElement('span');
+                tag.className = 'ml-2 text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full';
+                tag.textContent = 'Anpassung';
+                left.appendChild(tag);
+            }
             top.appendChild(left);
             const delBtn = document.createElement('button');
             delBtn.className = 'text-gray-300 hover:text-red-500 text-xs p-1';
@@ -1731,7 +1851,7 @@ function renderPointsEntries(pd) {
                 li.appendChild(sub);
             }
             delBtn.addEventListener('click', async () => {
-                const ok = await uiConfirm(`Lektion vom ${formatDateDisplay(entry.date)} (+${entry.points} Punkte) löschen?`, { okLabel: 'Löschen', danger: true });
+                const ok = await uiConfirm(`${entry.type === 'adjust' ? 'Anpassung' : 'Lektion'} vom ${formatDateDisplay(entry.date)} (${entry.points > 0 ? '+' : ''}${entry.points} Punkte) löschen?`, { okLabel: 'Löschen', danger: true });
                 if (!ok) return;
                 pd.entries = pd.entries.filter(e => e.id !== entry.id);
                 savePointsData(); renderPointsTab();
