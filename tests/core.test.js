@@ -382,3 +382,51 @@ test('validateBackup: Attendance verwaister Klassen wird verworfen, Zähler wach
     assert.equal(res.attendanceData['99'], undefined);
     assert.ok(res.stuIdCounter >= 3);
 });
+
+// --- computePointsTotal ---
+test('computePointsTotal: summiert Lektionen und respektiert Resets', () => {
+    assert.equal(TG.computePointsTotal([]), 0);
+    assert.equal(TG.computePointsTotal([
+        { type: 'lektion', points: 7 },
+        { type: 'lektion', points: 5 }
+    ]), 12);
+    assert.equal(TG.computePointsTotal([
+        { type: 'lektion', points: 7 },
+        { type: 'reset' },
+        { type: 'lektion', points: 5 },
+        { type: 'lektion', points: 3 }
+    ]), 8);
+    // ungültige Punktwerte zählen nicht
+    assert.equal(TG.computePointsTotal([{ type: 'lektion', points: -4 }, { type: 'lektion', points: 'x' }]), 0);
+});
+
+// --- validateBackup: Klassenpunkte ---
+test('validateBackup: pointsData wird validiert, collectsPoints bleibt erhalten', () => {
+    const result = TG.validateBackup({
+        classes: [{ id: 1, name: '7a', collectsPoints: true, students: [] }],
+        pointsData: {
+            '1': {
+                goals: [
+                    { id: 1, text: 'Fairplay', points: 2 },
+                    { id: 2, text: '', points: 1 },
+                    { id: 3, text: 'Start', points: 99 }
+                ],
+                entries: [
+                    { id: 4, type: 'lektion', date: '2026-09-07', goalIds: [1], note: 'gut', points: 2 },
+                    { id: 5, type: 'reset', date: '2026-09-14' },
+                    { id: 6, type: 'lektion', date: 'kein-datum', goalIds: [], note: '', points: 1 }
+                ]
+            },
+            '99': { goals: [], entries: [] }
+        },
+        pointsIdCounter: 2
+    });
+    assert.ok(result);
+    assert.equal(result.classes[0].collectsPoints, true);
+    assert.equal(result.pointsData['1'].goals.length, 2);          // leerer Text verworfen
+    assert.equal(result.pointsData['1'].goals[1].points, 1);       // 99 → normalisiert auf 1
+    assert.equal(result.pointsData['1'].entries.length, 2);        // ungültiges Datum verworfen
+    assert.equal(result.pointsData['1'].entries[1].type, 'reset');
+    assert.equal(result.pointsData['99'], undefined);              // verwaiste Klasse verworfen
+    assert.equal(result.pointsIdCounter, 6);                       // wächst über höchste gültige ID
+});
