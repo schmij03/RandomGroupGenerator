@@ -110,6 +110,30 @@ test('bulkParse: Klassenkürzel in eckigen Klammern', () => {
     ]);
 });
 
+// --- Hobbys ---
+test('parseHobbies: trennt, trimmt, dedupliziert (case-insensitiv) und begrenzt', () => {
+    assert.deepEqual(TG.parseHobbies('Fussball, Tennis'), ['Fussball', 'Tennis']);
+    assert.deepEqual(TG.parseHobbies('Fussball/Tennis; fussball'), ['Fussball', 'Tennis']);
+    assert.deepEqual(TG.parseHobbies('  '), []);
+    assert.deepEqual(TG.parseHobbies(''), []);
+    assert.equal(TG.parseHobbies('x'.repeat(50))[0].length, 30);
+});
+
+test('sanitizeHobbies: verwirft Nicht-Strings und Nicht-Arrays', () => {
+    assert.deepEqual(TG.sanitizeHobbies(['Fussball', 42, '', ' Tennis ']), ['Fussball', 'Tennis']);
+    assert.deepEqual(TG.sanitizeHobbies('Fussball'), []);
+    assert.deepEqual(TG.sanitizeHobbies(undefined), []);
+});
+
+// --- sanitizeStatus ---
+test('sanitizeStatus: nur present/absent/injured, sonst present', () => {
+    assert.equal(TG.sanitizeStatus('present'), 'present');
+    assert.equal(TG.sanitizeStatus('absent'), 'absent');
+    assert.equal(TG.sanitizeStatus('injured'), 'injured');
+    assert.equal(TG.sanitizeStatus('kaputt'), 'present');
+    assert.equal(TG.sanitizeStatus(undefined), 'present');
+});
+
 // --- pointsToGrade ---
 test('pointsToGrade: Schweizer Formel, Rundung und Grenzen', () => {
     assert.equal(TG.pointsToGrade(20, 20), 6);
@@ -152,6 +176,42 @@ test('validateBackup: Prüfungen werden validiert und normalisiert', () => {
     assert.equal(result.examIdCounter, 3);                             // Zähler wächst über höchste gültige ID
 });
 
+test('validateBackup: injured-Status bleibt erhalten, unbekannter Status wird present', () => {
+    const b = validBackup();
+    b.attendanceData['1']['2026-06-29'].records['1'].status = 'injured';
+    b.attendanceData['1']['2026-06-29'].records['1'].note = 'Knie';
+    b.attendanceData['1']['2026-06-29'].records['2'].status = 'kaputt';
+    const res = TG.validateBackup(b);
+    assert.equal(res.attendanceData['1']['2026-06-29'].records['1'].status, 'injured');
+    assert.equal(res.attendanceData['1']['2026-06-29'].records['1'].note, 'Knie');
+    assert.equal(res.attendanceData['1']['2026-06-29'].records['2'].status, 'present');
+});
+
+test('validateBackup: Schnuppern ist gültige Grund-Kategorie', () => {
+    const b = validBackup();
+    b.attendanceData['1']['2026-06-29'].records['2'].reasonCategory = 'Schnuppern';
+    const res = TG.validateBackup(b);
+    assert.equal(res.attendanceData['1']['2026-06-29'].records['2'].reasonCategory, 'Schnuppern');
+});
+
+test('validateBackup: hobbies der Schüler bleiben erhalten und werden bereinigt', () => {
+    const result = TG.validateBackup({
+        classes: [{ id: 1, name: 'G', students: [
+            { id: 1, name: 'Anna', gender: 'female', hobbies: ['Fussball', ' Tennis ', 42, ''] },
+            { id: 2, name: 'Max', gender: 'male', hobbies: 'kein-array' }
+        ] }]
+    });
+    assert.deepEqual(result.classes[0].students[0].hobbies, ['Fussball', 'Tennis']);
+    assert.deepEqual(result.classes[0].students[1].hobbies, []);
+});
+
+// --- parseCsvImport: Hobby-Spalte ---
+test('parseCsvImport: sechste Spalte wird als Hobbys gelesen ("/"-getrennt)', () => {
+    const rows = TG.parseCsvImport('Klasse;Name;Geschlecht;Sportlich;Kürzel;Hobbys\nGruppe A;Anna;w;s;7a;Fussball/Tennis\nGruppe A;Max;m;;;');
+    assert.deepEqual(rows[0].hobbies, ['Fussball', 'Tennis']);
+    assert.deepEqual(rows[1].hobbies, []);
+});
+
 test('validateBackup: classTag der Schüler bleibt erhalten und wird begrenzt', () => {
     const result = TG.validateBackup({
         classes: [{ id: 1, name: 'G', students: [
@@ -192,12 +252,27 @@ test('parseAttendanceCsv: Status-Synonyme und ungültiger Status', () => {
     assert.equal(invalid.length, 1);
 });
 
+test('parseAttendanceCsv: Status "verletzt" = anwesend, macht nicht mit', () => {
+    const { rows } = TG.parseAttendanceCsv(
+        '01.09.2025;Anna;verletzt;;Fuss verstaucht\n01.09.2025;Max;injured;;'
+    );
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].status, 'injured');
+    assert.equal(rows[0].note, 'Fuss verstaucht');
+    assert.equal(rows[1].status, 'injured');
+});
+
+test('parseAttendanceCsv: Schnuppern wird als Grund erkannt', () => {
+    const { rows } = TG.parseAttendanceCsv('01.09.2025;Anna;abwesend;Schnuppern;');
+    assert.equal(rows[0].reasonCategory, 'Schnuppern');
+});
+
 // --- parseCsvImport ---
 test('parseCsvImport: Kopfzeile wird übersprungen', () => {
     const rows = TG.parseCsvImport('Klasse;Name;Geschlecht;Sportlich\n7a;Anna;w;s\n7a;Max;m;');
     assert.equal(rows.length, 2);
-    assert.deepEqual(rows[0], { className: '7a', studentName: 'Anna', gender: 'female', sporty: true, classTag: '' });
-    assert.deepEqual(rows[1], { className: '7a', studentName: 'Max', gender: 'male', sporty: false, classTag: '' });
+    assert.deepEqual(rows[0], { className: '7a', studentName: 'Anna', gender: 'female', sporty: true, classTag: '', hobbies: [] });
+    assert.deepEqual(rows[1], { className: '7a', studentName: 'Max', gender: 'male', sporty: false, classTag: '', hobbies: [] });
 });
 
 test('parseCsvImport: ohne Kopfzeile bleibt alles erhalten', () => {
@@ -256,6 +331,23 @@ test('distributeTeams: Sportlichkeits-Balance ±1 pro Team', () => {
     const teams = TG.distributeTeams(persons, 4, { balanceSport: true });
     const sportyCounts = teams.map(t => t.filter(p => p.sporty).length);
     assert.ok(Math.max(...sportyCounts) - Math.min(...sportyCounts) <= 1);
+});
+
+test('distributeTeams: sportLevelOf verteilt jede Stufe ±1 pro Team', () => {
+    // 4 Fussballer (Stufe 2), 4 sportliche (Stufe 1), 4 übrige (Stufe 0) auf 4 Teams
+    const persons = Array.from({ length: 12 }, (_, i) => ({
+        id: i + 1, name: `P${i + 1}`, gender: 'female',
+        sporty: i % 3 === 1,
+        hobbies: i % 3 === 0 ? ['Fussball'] : []
+    }));
+    const levelOf = p => (p.hobbies || []).includes('Fussball') ? 2 : (p.sporty ? 1 : 0);
+    const teams = TG.distributeTeams(persons, 4, { balanceSport: true, sportLevelOf: levelOf });
+    [2, 1, 0].forEach(level => {
+        const counts = teams.map(t => t.filter(p => levelOf(p) === level).length);
+        assert.ok(Math.max(...counts) - Math.min(...counts) <= 1, `Stufe ${level} unausgewogen: ${counts}`);
+    });
+    const all = teams.flat().map(p => p.id).sort((a, b) => a - b);
+    assert.deepEqual(all, persons.map(p => p.id));
 });
 
 test('distributeTeams: niemand geht verloren oder wird dupliziert', () => {

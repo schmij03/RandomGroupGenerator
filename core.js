@@ -11,10 +11,30 @@
     const TIME_RE = /^\d{2}:\d{2}$/;
     const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
     const WEEKDAYS_FULL = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
-    const REASON_CATEGORIES = ['Krank', 'Verletzt', 'Entschuldigt', 'Unentschuldigt', 'Sonstiges'];
+    const REASON_CATEGORIES = ['Krank', 'Verletzt', 'Entschuldigt', 'Schnuppern', 'Unentschuldigt', 'Sonstiges'];
+    // Anwesenheits-Status: 'injured' = anwesend, kann aber nicht aktiv mitmachen (z.B. verletzt).
+    const ATTENDANCE_STATUSES = ['present', 'absent', 'injured'];
 
     // Nur diese drei Werte dürfen je in s.gender landen; alles andere fällt auf 'diverse' zurück.
     function sanitizeGender(g) { return (g === 'female' || g === 'male' || g === 'diverse') ? g : 'diverse'; }
+    function sanitizeStatus(s) { return (s === 'absent' || s === 'injured') ? s : 'present'; }
+
+    // HOBBYS/SPORTARTEN — freie Texteingabe ("Fussball, Tennis"), normalisiert und dedupliziert.
+    function parseHobbies(text) {
+        return sanitizeHobbies(String(text || '').split(/[,;/]+/));
+    }
+    function sanitizeHobbies(list) {
+        if (!Array.isArray(list)) return [];
+        const out = [];
+        for (const h of list) {
+            if (typeof h !== 'string') continue;
+            const t = h.trim().slice(0, 30);
+            if (!t) continue;
+            if (!out.some(o => o.toLowerCase() === t.toLowerCase())) out.push(t);
+            if (out.length >= 20) break;
+        }
+        return out;
+    }
 
     function todayStr() {
         const d = new Date();
@@ -78,8 +98,9 @@
         return { added, skipped, defaults };
     }
 
-    // CSV/TXT-Import: "Klasse;Name;Geschlecht;Sportlich" pro Zeile. Eine Kopfzeile
-    // (wie im Format-Beispiel) wird erkannt und übersprungen.
+    // CSV/TXT-Import: "Klasse;Name;Geschlecht;Sportlich;Kürzel;Hobbys" pro Zeile.
+    // Hobbys innerhalb der Spalte mit "/" trennen (Komma ist Spalten-Trenner).
+    // Eine Kopfzeile (wie im Format-Beispiel) wird erkannt und übersprungen.
     function isCsvHeader(a, b) {
         return /^klasse$/i.test(a) && /^(name|sch(ü|ue)ler(in)?(nen)?|vorname)$/i.test(b || '');
     }
@@ -89,7 +110,7 @@
         lines.forEach((line, i) => {
             const parts = line.split(/[;,]/).map(p => p.trim());
             if (parts.length < 2) return;
-            const [className, studentName, genderRaw, sportyRaw, classTagRaw] = parts;
+            const [className, studentName, genderRaw, sportyRaw, classTagRaw, hobbiesRaw] = parts;
             if (!className || !studentName) return;
             if (i === 0 && isCsvHeader(className, studentName)) return;
             let gender = 'female';
@@ -97,15 +118,17 @@
             if (g.startsWith('m')) gender = 'male'; else if (g.startsWith('d')) gender = 'diverse';
             const sporty = /^(s|ja|x|1|sportlich|true)$/i.test(sportyRaw || '');
             const classTag = (classTagRaw || '').slice(0, 20).trim();
-            rows.push({ className, studentName, gender, sporty, classTag });
+            const hobbies = parseHobbies(hobbiesRaw || '');
+            rows.push({ className, studentName, gender, sporty, classTag, hobbies });
         });
         return rows;
     }
 
     // ANWESENHEITS-IMPORT (CSV aus Excel): "Datum;Name;Status;Grund;Notiz" pro Zeile.
     // Datum: JJJJ-MM-TT oder TT.MM.JJJJ. Status: anwesend/abwesend (auch ja/nein, 1/0,
-    // present/absent, x = anwesend). Grund muss einer der bekannten Kategorien entsprechen,
-    // sonst wandert der Text in die Notiz. Kopfzeile ("Datum;Name;…") wird übersprungen.
+    // present/absent, x = anwesend) oder verletzt/injured = anwesend, macht aber nicht mit.
+    // Grund muss einer der bekannten Kategorien entsprechen, sonst wandert der Text in
+    // die Notiz. Kopfzeile ("Datum;Name;…") wird übersprungen.
     function parseAttendanceCsv(text) {
         const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
         const rows = [], invalid = [];
@@ -124,6 +147,7 @@
             let status = null;
             if (/^(anwesend|present|ja|1|x|a)$/.test(s)) status = 'present';
             else if (/^(abwesend|absent|nein|0|fehlt)$/.test(s)) status = 'absent';
+            else if (/^(verletzt|injured|zuschauen|zuschauend|dispensiert)$/.test(s)) status = 'injured';
             if (!date || !name || !status) { invalid.push(line); return; }
             let reasonCategory = '', note = typeof noteRaw === 'string' ? noteRaw : '';
             if (reasonRaw) {
@@ -183,20 +207,26 @@
         return a;
     }
 
+    // Sport-Stärke einer Person für die Verteilung: standardmässig 1 = sportlich, 0 = nicht.
+    // Bei einer konkreten Sportart liefert ein eigenes sportLevelOf z.B. 2 = spielt diese
+    // Sportart (Hobby), 1 = allgemein sportlich, 0 = keins von beidem.
+    function defaultSportLevel(p) { return p.sporty === true ? 1 : 0; }
+
     function distributeTeams(list, n, opts) {
-        const { balanceGender = false, balanceSport = false, rng } = opts || {};
+        const { balanceGender = false, balanceSport = false, rng, sportLevelOf } = opts || {};
+        const levelOf = sportLevelOf || defaultSportLevel;
         let teams = Array.from({ length: n }, () => []);
         const shuf = shuffleArray(list, rng);
         if (balanceGender || balanceSport) {
             // Personen in Gruppen mit gleichen Ausgleichs-Merkmalen aufteilen und diese
             // mit fortlaufendem Index über die Teams verteilen: so landet jede Gruppe
             // (z.B. "sportlich + weiblich") möglichst gleichmässig in allen Teams.
-            const sportKeys = balanceSport ? [true, false] : [null];
+            const sportKeys = balanceSport ? [...new Set(shuf.map(levelOf))].sort((a, b) => b - a) : [null];
             const genderKeys = balanceGender ? ['female', 'male', 'diverse'] : [null];
             const strata = [];
             sportKeys.forEach(sp => genderKeys.forEach(g => {
                 strata.push(shuf.filter(p =>
-                    (sp === null || (p.sporty === true) === sp) &&
+                    (sp === null || levelOf(p) === sp) &&
                     (g === null || p.gender === g)));
             }));
             let idx = 0;
@@ -210,9 +240,10 @@
 
     // "Nicht zusammen"-Paare: versucht Verstösse durch Tauschen zweier Personen zu
     // beheben. Bei balanceStrict wird zuerst ein Tauschpartner mit gleichen Merkmalen
-    // (Geschlecht + sportlich) gesucht, damit die Balance erhalten bleibt.
+    // (Geschlecht + Sport-Stärke) gesucht, damit die Balance erhalten bleibt.
     function enforceApart(teams, pairs, opts) {
-        const { balanceStrict = false } = opts || {};
+        const { balanceStrict = false, sportLevelOf } = opts || {};
+        const levelOf = sportLevelOf || defaultSportLevel;
         const key = name => String(name).trim().toLowerCase();
         const pairKey = (a, b) => [key(a), key(b)].sort().join(' ');
         const conflictSet = new Set((pairs || []).map(([a, b]) => pairKey(a, b)));
@@ -242,7 +273,7 @@
                     if (t2 === v.t) continue;
                     for (let j = 0; j < teams[t2].length; j++) {
                         const q = teams[t2][j];
-                        if (strict && (q.gender !== p.gender || (q.sporty === true) !== (p.sporty === true))) continue;
+                        if (strict && (q.gender !== p.gender || levelOf(q) !== levelOf(p))) continue;
                         if (wouldConflict(teams[t2], p, j)) continue;
                         if (wouldConflict(teams[v.t], q, v.i)) continue;
                         teams[v.t][v.i] = q; teams[t2][j] = p;
@@ -261,7 +292,8 @@
         if (!s || typeof s !== 'object' || !Number.isInteger(s.id) || typeof s.name !== 'string' || !s.name.trim()) return null;
         return {
             id: s.id, name: s.name.trim(), gender: sanitizeGender(s.gender), sporty: s.sporty === true,
-            classTag: typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : ''
+            classTag: typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : '',
+            hobbies: sanitizeHobbies(s.hobbies)
         };
     }
     function validateBackup(data) {
@@ -306,7 +338,7 @@
                         for (const [stuKey, rec] of Object.entries(session.records)) {
                             if (!rec || typeof rec !== 'object') continue;
                             records[stuKey] = {
-                                status: rec.status === 'absent' ? 'absent' : 'present',
+                                status: sanitizeStatus(rec.status),
                                 reasonCategory: REASON_CATEGORIES.includes(rec.reasonCategory) ? rec.reasonCategory : '',
                                 note: typeof rec.note === 'string' ? rec.note : ''
                             };
@@ -410,8 +442,9 @@
     }
 
     return {
-        DATE_RE, TIME_RE, WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES,
-        sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
+        DATE_RE, TIME_RE, WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES, ATTENDANCE_STATUSES,
+        sanitizeGender, sanitizeStatus, parseHobbies, sanitizeHobbies,
+        todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
         bulkParse, isCsvHeader, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade, computePointsTotal, computePointsSeries,
         shuffleArray, distributeTeams, enforceApart,
         validateBackup

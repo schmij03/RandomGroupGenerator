@@ -1,7 +1,8 @@
 // app.js — DOM/State der App. Reine Logik (Parser, Validierung, Team-Verteilung) liegt in core.js (window.TG).
 const {
     WEEKDAYS, WEEKDAYS_FULL, REASON_CATEGORIES, TIME_RE,
-    sanitizeGender, todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
+    sanitizeGender, sanitizeStatus, parseHobbies, sanitizeHobbies,
+    todayStr, getWeekdayIndex, getSemester, formatDateDisplay,
     bulkParse, parseCsvImport, parseAttendanceCsv, escapeCsv, pointsToGrade, computePointsTotal, computePointsSeries,
     distributeTeams, enforceApart, validateBackup
 } = window.TG;
@@ -79,8 +80,8 @@ function loadStorage() {
                     if (!Array.isArray(cls.students)) cls.students = [];
                     if (!Array.isArray(cls.formerStudents)) cls.formerStudents = [];
                     if (!Array.isArray(cls.schedule)) cls.schedule = [];
-                    cls.students.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; s.classTag = typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : ''; });
-                    cls.formerStudents.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; s.classTag = typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : ''; });
+                    cls.students.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; s.classTag = typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : ''; s.hobbies = sanitizeHobbies(s.hobbies); });
+                    cls.formerStudents.forEach(s => { s.gender = sanitizeGender(s.gender); s.sporty = s.sporty === true; s.classTag = typeof s.classTag === 'string' ? s.classTag.slice(0, 20).trim() : ''; s.hobbies = sanitizeHobbies(s.hobbies); });
                 });
                 classIdCounter = parseInt(localStorage.getItem('tg2_classId')||'1',10) || 1;
                 stuIdCounter = parseInt(localStorage.getItem('tg2_stuId')||'1',10) || 1;
@@ -91,7 +92,7 @@ function loadStorage() {
             const parsed = JSON.parse(p);
             if (Array.isArray(parsed)) {
                 persons = parsed;
-                persons.forEach(x => { x.gender = sanitizeGender(x.gender); x.sporty = x.sporty === true; });
+                persons.forEach(x => { x.gender = sanitizeGender(x.gender); x.sporty = x.sporty === true; x.hobbies = sanitizeHobbies(x.hobbies); });
                 personIdCounter = parseInt(localStorage.getItem('tg2_personId')||'1',10) || 1;
             }
         }
@@ -508,9 +509,11 @@ document.getElementById('add-student-form').addEventListener('submit', async e =
         if (!ok) return;
     }
     const classTag = document.getElementById('student-classtag-input').value.trim().slice(0, 20);
-    cls.students.push({ id: stuIdCounter++, name, gender, sporty, classTag });
+    const hobbies = parseHobbies(document.getElementById('student-hobbies-input').value);
+    cls.students.push({ id: stuIdCounter++, name, gender, sporty, classTag, hobbies });
     saveClasses();
     document.getElementById('student-name-input').value = '';
+    document.getElementById('student-hobbies-input').value = '';
     document.getElementById('student-sporty-input').checked = false;
     renderClassDetail();
     document.getElementById('student-name-input').focus();
@@ -532,7 +535,7 @@ function removeStudent(studentId) {
         cls.students = cls.students.filter(s => s.id !== studentId);
         if (studentHasAttendance(cls.id, studentId)) {
             if (!Array.isArray(cls.formerStudents)) cls.formerStudents = [];
-            cls.formerStudents.push({ id: student.id, name: student.name, gender: student.gender, sporty: student.sporty === true, classTag: student.classTag || '' });
+            cls.formerStudents.push({ id: student.id, name: student.name, gender: student.gender, sporty: student.sporty === true, classTag: student.classTag || '', hobbies: sanitizeHobbies(student.hobbies) });
         }
         saveClasses(); renderClassDetail();
     });
@@ -560,8 +563,29 @@ function renderStudentList(cls) {
             tagBadge.textContent = s.classTag;
             left.appendChild(tagBadge);
         }
+        if (Array.isArray(s.hobbies) && s.hobbies.length) {
+            const hobbyBadge = document.createElement('span');
+            hobbyBadge.className = 'text-xs bg-teal-50 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded-full truncate max-w-[9rem]';
+            hobbyBadge.textContent = s.hobbies.join(', ');
+            hobbyBadge.title = `Hobbys/Sportarten: ${s.hobbies.join(', ')}`;
+            left.appendChild(hobbyBadge);
+        }
         const actions = document.createElement('div');
         actions.className = 'flex items-center gap-0.5 flex-shrink-0';
+        const hobbyBtn = document.createElement('button');
+        hobbyBtn.className = `text-xs p-1 transition-colors ${Array.isArray(s.hobbies) && s.hobbies.length ? 'text-teal-500 hover:text-teal-700' : 'text-gray-200 hover:text-teal-500'}`;
+        hobbyBtn.innerHTML = '<i class="fas fa-futbol" aria-hidden="true"></i>';
+        hobbyBtn.title = Array.isArray(s.hobbies) && s.hobbies.length ? `Hobbys "${s.hobbies.join(', ')}" bearbeiten` : 'Hobbys/Sportarten erfassen';
+        hobbyBtn.setAttribute('aria-label', `Hobbys/Sportarten von ${s.name} bearbeiten`);
+        hobbyBtn.addEventListener('click', async () => {
+            const val = await uiPrompt(`Hobbys/Sportarten für "${s.name}" — durch Komma getrennt (leer = keine):`, {
+                title: 'Hobbys/Sportarten', placeholder: 'z.B. Fussball, Tennis', value: (s.hobbies || []).join(', '),
+                hint: 'Wird bei der Team-Generierung berücksichtigt, wenn dort eine Sportart gewählt ist.'
+            });
+            if (val === null) return;
+            s.hobbies = parseHobbies(val);
+            saveClasses(); renderStudentList(cls);
+        });
         const tagBtn = document.createElement('button');
         tagBtn.className = 'text-gray-200 hover:text-sky-500 text-xs p-1 transition-colors';
         tagBtn.innerHTML = '<i class="fas fa-tag" aria-hidden="true"></i>';
@@ -586,7 +610,7 @@ function renderStudentList(cls) {
         delBtn.title = 'Schüler(in) entfernen';
         delBtn.setAttribute('aria-label', `${s.name} entfernen`);
         delBtn.addEventListener('click', () => removeStudent(s.id));
-        actions.appendChild(sportyBtn); actions.appendChild(delBtn);
+        actions.appendChild(tagBtn); actions.appendChild(hobbyBtn); actions.appendChild(sportyBtn); actions.appendChild(delBtn);
         li.appendChild(left); li.appendChild(actions); ul.appendChild(li);
     });
 }
@@ -606,7 +630,7 @@ document.getElementById('class-bulk-import-btn').addEventListener('click', () =>
     if (!text) return;
     const { added, skipped, defaults } = bulkParse(text, (name, gender, sporty, classTag) => {
         if (cls.students.find(s => s.name.toLowerCase() === name.toLowerCase())) return false;
-        cls.students.push({ id: stuIdCounter++, name, gender, sporty, classTag: classTag || '' }); return true;
+        cls.students.push({ id: stuIdCounter++, name, gender, sporty, classTag: classTag || '', hobbies: [] }); return true;
     });
     saveClasses(); document.getElementById('class-bulk-input').value = '';
     showBulkMsg('class-bulk-msg', added, skipped, defaults);
@@ -638,7 +662,7 @@ function safeFilePart(str, maxLen = 40) {
 
 document.getElementById('export-classes-btn').addEventListener('click', async () => {
     if (classes.length === 0) { await uiAlert('Keine Klassen zum Exportieren vorhanden.'); return; }
-    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender, sporty: s.sporty === true, classTag: s.classTag || '' })) }));
+    const data = classes.map(c => ({ name: c.name, schedule: c.schedule || [], students: c.students.map(s => ({ name: s.name, gender: s.gender, sporty: s.sporty === true, classTag: s.classTag || '', hobbies: sanitizeHobbies(s.hobbies) })) }));
     downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `klassen-export-${todayStr()}.json`);
 });
 
@@ -673,7 +697,8 @@ $importFileInput.addEventListener('change', () => {
                         const gender = (typeof s === 'object' && (s.gender === 'female' || s.gender === 'male' || s.gender === 'diverse')) ? s.gender : 'female';
                         const sporty = typeof s === 'object' && s.sporty === true;
                         const classTag = (typeof s === 'object' && typeof s.classTag === 'string') ? s.classTag.slice(0, 20).trim() : '';
-                        cls.students.push({ id: stuIdCounter++, name: sName, gender, sporty, classTag });
+                        const hobbies = typeof s === 'object' ? sanitizeHobbies(s.hobbies) : [];
+                        cls.students.push({ id: stuIdCounter++, name: sName, gender, sporty, classTag, hobbies });
                         importedStudents++;
                     });
                 });
@@ -682,7 +707,7 @@ $importFileInput.addEventListener('change', () => {
                     let cls = classes.find(c => c.name.toLowerCase() === row.className.toLowerCase());
                     if (!cls) { cls = { id: classIdCounter++, name: row.className, students: [], formerStudents: [], schedule: [] }; classes.push(cls); imported++; }
                     if (cls.students.find(st => st.name.toLowerCase() === row.studentName.toLowerCase())) return;
-                    cls.students.push({ id: stuIdCounter++, name: row.studentName, gender: row.gender, sporty: row.sporty, classTag: row.classTag || '' });
+                    cls.students.push({ id: stuIdCounter++, name: row.studentName, gender: row.gender, sporty: row.sporty, classTag: row.classTag || '', hobbies: row.hobbies || [] });
                     importedStudents++;
                 });
             }
@@ -766,7 +791,7 @@ function loadAttendanceSession() {
     currentSessionRecords = {};
     cls.students.forEach(s => {
         const rec = existing && existing.records[s.id];
-        currentSessionRecords[s.id] = rec ? { status: rec.status, reasonCategory: rec.reasonCategory || '', note: rec.note || '' } : { status: 'present', reasonCategory: '', note: '' };
+        currentSessionRecords[s.id] = rec ? { status: sanitizeStatus(rec.status), reasonCategory: rec.reasonCategory || '', note: rec.note || '' } : { status: 'present', reasonCategory: '', note: '' };
     });
     attendanceDirty = false; updateDirtyHint();
     document.getElementById('attendance-saved-msg').classList.add('hidden');
@@ -798,35 +823,57 @@ document.getElementById('all-absent-btn').addEventListener('click', () => {
     markAttendanceDirty(); renderAttendanceGrid();
 });
 
+// Klick wechselt den Status im Kreis: anwesend → abwesend → verletzt (anwesend,
+// macht nicht mit) → anwesend. Verletzte zählen als anwesend, werden aber nicht
+// in die Team-Generierung übernommen.
+const STATUS_LABELS = { present: 'anwesend', absent: 'abwesend', injured: 'anwesend, macht nicht mit (verletzt)' };
+const NEXT_STATUS = { present: 'absent', absent: 'injured', injured: 'present' };
+
 function renderAttendanceGrid() {
     const cls = classes.find(c => c.id === selAttendClassId);
     if (!cls) return;
-    const presentCount = Object.values(currentSessionRecords).filter(r => r.status === 'present').length;
+    const recs = Object.values(currentSessionRecords);
+    const participatingCount = recs.filter(r => r.status === 'present').length;
+    const injuredCount = recs.filter(r => r.status === 'injured').length;
     document.getElementById('total-students-count').textContent = cls.students.length;
-    document.getElementById('present-count').textContent = presentCount;
-    document.getElementById('load-to-teams-label').textContent = `Teams erstellen mit ${presentCount} Schüler${presentCount === 1 ? '' : 'n'}`;
+    document.getElementById('present-count').textContent = participatingCount + injuredCount;
+    document.getElementById('injured-count-note').textContent = injuredCount > 0 ? `davon ${injuredCount} verletzt (machen nicht mit)` : '';
+    document.getElementById('load-to-teams-label').textContent = `Teams erstellen mit ${participatingCount} Schüler${participatingCount === 1 ? '' : 'n'}`;
     const grid = document.getElementById('attendance-grid');
     grid.innerHTML = '';
     if (cls.students.length === 0) { grid.innerHTML = '<p class="text-sm text-gray-400 col-span-full text-center py-6">Diese Klasse hat noch keine Schüler.</p>'; return; }
     cls.students.forEach(s => {
         const rec = currentSessionRecords[s.id];
-        const present = rec.status === 'present';
+        const status = sanitizeStatus(rec.status);
         const card = document.createElement('div');
-        card.className = `attendance-card p-3 rounded-xl border-2 select-none ${present ? 'bg-green-50 border-green-400 text-green-900' : 'bg-red-50 border-red-300 text-red-900'}`;
+        const cardColor = status === 'present' ? 'bg-green-50 border-green-400 text-green-900'
+            : status === 'injured' ? 'bg-orange-50 border-orange-400 text-orange-900'
+            : 'bg-red-50 border-red-300 text-red-900';
+        card.className = `attendance-card p-3 rounded-xl border-2 select-none ${cardColor}`;
         const topRow = document.createElement('button');
         topRow.type = 'button';
         topRow.className = 'flex items-center gap-3 cursor-pointer w-full text-left';
-        topRow.setAttribute('aria-pressed', String(present));
-        topRow.setAttribute('aria-label', `${s.name}: ${present ? 'anwesend' : 'abwesend'} — klicken zum Umschalten`);
-        topRow.addEventListener('click', () => { rec.status = present ? 'absent' : 'present'; markAttendanceDirty(); renderAttendanceGrid(); });
+        topRow.setAttribute('aria-label', `${s.name}: ${STATUS_LABELS[status]} — klicken zum Umschalten (anwesend → abwesend → verletzt)`);
+        topRow.addEventListener('click', () => { rec.status = NEXT_STATUS[status]; markAttendanceDirty(); renderAttendanceGrid(); });
         const checkbox = document.createElement('div');
-        checkbox.className = `w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${present ? 'bg-green-500 border-green-500' : 'bg-red-400 border-red-400'}`;
-        checkbox.innerHTML = present ? '<i class="fas fa-check text-white text-xs" aria-hidden="true"></i>' : '<i class="fas fa-times text-white text-xs" aria-hidden="true"></i>';
+        const boxColor = status === 'present' ? 'bg-green-500 border-green-500'
+            : status === 'injured' ? 'bg-orange-400 border-orange-400'
+            : 'bg-red-400 border-red-400';
+        checkbox.className = `w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${boxColor}`;
+        checkbox.innerHTML = status === 'present' ? '<i class="fas fa-check text-white text-xs" aria-hidden="true"></i>'
+            : status === 'injured' ? '<i class="fas fa-user-injured text-white text-xs" aria-hidden="true"></i>'
+            : '<i class="fas fa-times text-white text-xs" aria-hidden="true"></i>';
         const iconSpan = document.createElement('span'); iconSpan.innerHTML = GENDER_ICONS[sanitizeGender(s.gender)];
         const nameSpan = document.createElement('span'); nameSpan.className = 'font-medium text-sm flex-1 truncate'; nameSpan.textContent = s.name;
         topRow.appendChild(checkbox); topRow.appendChild(iconSpan); topRow.appendChild(nameSpan);
+        if (status === 'injured') {
+            const injuredTag = document.createElement('span');
+            injuredTag.className = 'text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full flex-shrink-0';
+            injuredTag.textContent = 'macht nicht mit';
+            topRow.appendChild(injuredTag);
+        }
         card.appendChild(topRow);
-        if (!present) {
+        if (status === 'absent') {
             const reasonRow = document.createElement('div');
             reasonRow.className = 'flex flex-col sm:flex-row gap-1.5 mt-2 pt-2 border-t border-red-200';
             const sel = document.createElement('select');
@@ -844,6 +891,17 @@ function renderAttendanceGrid() {
             note.addEventListener('input', e => { rec.note = e.target.value; markAttendanceDirty(); });
             reasonRow.appendChild(sel); reasonRow.appendChild(note);
             card.appendChild(reasonRow);
+        } else if (status === 'injured') {
+            const noteRow = document.createElement('div');
+            noteRow.className = 'mt-2 pt-2 border-t border-orange-200';
+            const note = document.createElement('input');
+            note.type = 'text'; note.placeholder = 'Notiz (optional, z.B. Fuss verstaucht)'; note.value = rec.note || '';
+            note.setAttribute('aria-label', `Notiz zur Verletzung von ${s.name}`);
+            note.className = 'text-xs border border-orange-200 rounded-md p-1.5 w-full focus:outline-none focus:border-orange-400';
+            note.addEventListener('click', e => e.stopPropagation());
+            note.addEventListener('input', e => { rec.note = e.target.value; markAttendanceDirty(); });
+            noteRow.appendChild(note);
+            card.appendChild(noteRow);
         }
         grid.appendChild(card);
     });
@@ -876,7 +934,8 @@ function renderAttendanceSessionsList(cls) {
         return;
     }
     sessions.forEach(session => {
-        const presentN = Object.values(session.records).filter(r => r.status === 'present').length;
+        // Verletzte gelten als anwesend (sie sind vor Ort, machen nur nicht mit).
+        const presentN = Object.values(session.records).filter(r => r.status !== 'absent').length;
         const totalN = Object.values(session.records).length;
         const li = document.createElement('li');
         li.className = 'flex items-center justify-between bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-sm';
@@ -946,7 +1005,7 @@ $attendanceImportInput.addEventListener('change', () => {
             attendanceData[cls.id][row.date].records[student.id] = {
                 status: row.status,
                 reasonCategory: row.status === 'absent' ? row.reasonCategory : '',
-                note: row.status === 'absent' ? row.note : ''
+                note: row.status === 'present' ? '' : row.note
             };
             importedRecords++;
             dates.add(row.date);
@@ -967,16 +1026,19 @@ $attendanceImportInput.addEventListener('change', () => {
 document.getElementById('load-to-teams-btn').addEventListener('click', async () => {
     const cls = classes.find(c => c.id === selAttendClassId);
     if (!cls) return;
+    // Nur aktiv Mitmachende übernehmen — Verletzte sind zwar anwesend, spielen aber nicht mit.
     const present = cls.students.filter(s => currentSessionRecords[s.id] && currentSessionRecords[s.id].status === 'present');
-    if (present.length === 0) { await uiAlert('Keine Schüler(innen) als anwesend markiert.'); return; }
+    const injuredN = cls.students.filter(s => currentSessionRecords[s.id] && currentSessionRecords[s.id].status === 'injured').length;
+    if (present.length === 0) { await uiAlert('Keine Schüler(innen) als anwesend (mitmachend) markiert.'); return; }
     if (personsManual && persons.length > 0) {
         const ok = await uiConfirm(`Die aktuelle Teilnehmerliste (${persons.length} manuell erfasste Person(en)) wird ersetzt. Fortfahren?`, { okLabel: 'Ersetzen' });
         if (!ok) return;
     }
-    persons = present.map(s => ({ id: personIdCounter++, name: s.name, gender: s.gender, sporty: s.sporty === true }));
+    persons = present.map(s => ({ id: personIdCounter++, name: s.name, gender: s.gender, sporty: s.sporty === true, hobbies: sanitizeHobbies(s.hobbies) }));
     personsManual = false;
     savePersons();
-    document.getElementById('source-banner-text').textContent = `Geladen aus "${cls.name}": ${present.length} von ${cls.students.length} Schüler(innen) anwesend.`;
+    document.getElementById('source-banner-text').textContent = `Geladen aus "${cls.name}": ${present.length} von ${cls.students.length} Schüler(innen) anwesend.`
+        + (injuredN > 0 ? ` ${injuredN} verletzte Schüler(innen) wurden nicht übernommen.` : '');
     document.getElementById('source-banner').classList.remove('hidden');
     document.getElementById('results-section').classList.add('hidden');
     switchTab('teams');
@@ -1010,14 +1072,19 @@ document.querySelectorAll('#stats-table th[data-sort-key]').forEach(th => {
 
 function buildStatsRows(cls, sessions) {
     const rowFor = (s, former) => {
-        let present = 0, absent = 0;
+        let present = 0, absent = 0, injured = 0;
         const reasonCounts = {};
         const absences = [];
         sessions.forEach(session => {
             const rec = session.records[s.id];
             if (!rec) return;
             if (rec.status === 'present') present++;
-            else {
+            else if (rec.status === 'injured') {
+                // Verletzt = anwesend für die Quote, aber separat ausgewiesen (inkl. Details).
+                present++; injured++;
+                reasonCounts['Verletzt (anwesend)'] = (reasonCounts['Verletzt (anwesend)'] || 0) + 1;
+                absences.push({ date: session.date, reasonCategory: 'Verletzt (anwesend)', note: rec.note || '', injured: true });
+            } else {
                 absent++;
                 const key = rec.reasonCategory || 'Ohne Angabe';
                 reasonCounts[key] = (reasonCounts[key] || 0) + 1;
@@ -1026,7 +1093,7 @@ function buildStatsRows(cls, sessions) {
         });
         const total = present + absent;
         const quote = total > 0 ? Math.round((present / total) * 100) : null;
-        return { student: s, former, present, absent, recorded: total, quote, reasonCounts, absences };
+        return { student: s, former, present, absent, injured, recorded: total, quote, reasonCounts, absences };
     };
     const rows = cls.students.map(s => rowFor(s, false));
     // Ehemalige Schüler(innen) mit erfasster Historie bleiben in der Auswertung sichtbar.
@@ -1129,6 +1196,14 @@ function renderStats() {
         tagTd.className = 'px-3 py-2 text-xs text-sky-700';
         tagTd.textContent = row.student.classTag || '–';
         const presentTd = document.createElement('td'); presentTd.className = 'text-center px-3 py-2 text-green-700'; presentTd.textContent = row.present;
+        if (row.injured > 0) {
+            presentTd.title = `davon ${row.injured}× verletzt anwesend (nicht mitgemacht)`;
+            const injSpan = document.createElement('span');
+            injSpan.className = 'text-orange-500 text-xs ml-1';
+            injSpan.textContent = `(${row.injured})`;
+            injSpan.setAttribute('aria-label', `davon ${row.injured} mal verletzt anwesend`);
+            presentTd.appendChild(injSpan);
+        }
         const absentTd = document.createElement('td'); absentTd.className = 'text-center px-3 py-2 text-red-600'; absentTd.textContent = row.absent;
         const recordedTd = document.createElement('td');
         recordedTd.className = 'text-center px-3 py-2 text-gray-500 text-xs';
@@ -1149,7 +1224,7 @@ function renderStats() {
 
         if (row.absences.length > 0) {
             tr.className += ' cursor-pointer hover:bg-gray-50';
-            tr.title = 'Klicken für Abwesenheits-Details';
+            tr.title = 'Klicken für Details (Abwesenheiten/Verletzungen)';
             const detailTr = document.createElement('tr');
             detailTr.className = 'hidden bg-gray-50 border-t border-gray-100';
             const detailTd = document.createElement('td');
@@ -1164,7 +1239,7 @@ function renderStats() {
                 dateSpan.className = 'font-medium text-gray-700 w-20 flex-shrink-0';
                 dateSpan.textContent = formatDateDisplay(a.date);
                 const catSpan = document.createElement('span');
-                catSpan.className = 'px-1.5 py-0.5 rounded bg-red-50 text-red-700 flex-shrink-0';
+                catSpan.className = `px-1.5 py-0.5 rounded flex-shrink-0 ${a.injured ? 'bg-orange-50 text-orange-700' : 'bg-red-50 text-red-700'}`;
                 catSpan.textContent = a.reasonCategory || 'Ohne Angabe';
                 li.appendChild(dateSpan); li.appendChild(catSpan);
                 if (a.note) {
@@ -1868,7 +1943,7 @@ async function addPerson(name, gender, sporty = false, { confirmDuplicate = fals
         const ok = await uiConfirm(`"${name}" ist bereits in der Liste. Trotzdem hinzufügen (z.B. zweite Person mit gleichem Namen)?`, { title: 'Doppelter Name', okLabel: 'Trotzdem hinzufügen' });
         if (!ok) return false;
     }
-    persons.push({ id: personIdCounter++, name, gender, sporty: sporty === true });
+    persons.push({ id: personIdCounter++, name, gender, sporty: sporty === true, hobbies: [] });
     personsManual = true;
     savePersons(); renderPersonList(); return true;
 }
@@ -1931,7 +2006,28 @@ function renderPersonList() {
         });
     }
     refreshApartSelects();
+    refreshActivitySelect();
     renderApartList();
+}
+
+// AKTIVITÄTS-AUSWAHL — steuert, wie Sportlichkeit/Hobbys bei der Verteilung zählen:
+// 'none' = kein Sport (keine Sport-Balance), 'general' = allgemeines Sportspiel
+// (sportlich-Markierung fair verteilen), 'sport:<Name>' = konkrete Sportart
+// (Schüler(innen) mit diesem Hobby zusätzlich fair verteilen).
+function refreshActivitySelect() {
+    const sel = document.getElementById('activity-select');
+    const prev = sel.value;
+    const sports = [...new Set(persons.flatMap(p => p.hobbies || []).map(h => h.trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'de'));
+    sel.innerHTML = '<option value="none">Kein Sport (z.B. Klassenzimmer)</option>'
+        + '<option value="general">Sport — allgemeines Spiel</option>';
+    sports.forEach(sport => {
+        const opt = document.createElement('option');
+        opt.value = `sport:${sport}`; opt.textContent = `Sport — ${sport}`;
+        sel.appendChild(opt);
+    });
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+    document.getElementById('activity-hint').classList.toggle('hidden', sports.length > 0);
 }
 
 document.getElementById('toggle-bulk-btn').addEventListener('click', () => document.getElementById('bulk-area').classList.toggle('hidden'));
@@ -1940,7 +2036,7 @@ document.getElementById('add-bulk-btn').addEventListener('click', () => {
     if (!text) return;
     const { added, skipped, defaults } = bulkParse(text, (name, gender, sporty) => {
         if (persons.find(p => p.name.toLowerCase() === name.toLowerCase())) return false;
-        persons.push({ id: personIdCounter++, name, gender, sporty: sporty === true });
+        persons.push({ id: personIdCounter++, name, gender, sporty: sporty === true, hobbies: [] });
         return true;
     });
     personsManual = true;
@@ -2020,7 +2116,17 @@ function generateTeams() {
     const mode = document.getElementById('team-mode').value; // 'teams' | 'size'
     const inputVal = parseInt(document.getElementById('num-teams').value, 10);
     const balanceGender = document.getElementById('balance-gender').checked;
-    const balanceSport = document.getElementById('balance-sport').checked;
+    const activity = document.getElementById('activity-select').value; // 'none' | 'general' | 'sport:<Name>'
+    let balanceSport = false, sportLevelOf;
+    if (activity === 'general') {
+        balanceSport = true;
+    } else if (activity.startsWith('sport:')) {
+        const sport = activity.slice(6).toLowerCase();
+        balanceSport = true;
+        // 2 = spielt diese Sportart (Hobby), 1 = allgemein sportlich, 0 = keins von beidem —
+        // so werden Vereinsspieler UND sportliche Kinder gleichmässig verteilt.
+        sportLevelOf = p => (p.hobbies || []).some(h => h.trim().toLowerCase() === sport) ? 2 : (p.sporty === true ? 1 : 0);
+    }
     const errEl = document.getElementById('error-msg');
     const apartWarnEl = document.getElementById('apart-warning');
     errEl.classList.add('hidden'); apartWarnEl.classList.add('hidden');
@@ -2035,9 +2141,9 @@ function generateTeams() {
         if (isNaN(n) || n < 2) { errEl.textContent = 'Mindestens 2 Teams erforderlich.'; errEl.classList.remove('hidden'); return; }
         if (n > persons.length) { errEl.textContent = 'Mehr Teams als Teilnehmer.'; errEl.classList.remove('hidden'); return; }
     }
-    let teams = distributeTeams(persons, n, { balanceGender, balanceSport });
+    let teams = distributeTeams(persons, n, { balanceGender, balanceSport, sportLevelOf });
     if (apartPairs.length > 0) {
-        const result = enforceApart(teams, apartPairs, { balanceStrict: balanceGender || balanceSport });
+        const result = enforceApart(teams, apartPairs, { balanceStrict: balanceGender || balanceSport, sportLevelOf });
         teams = result.teams;
         if (result.unresolved) {
             apartWarnEl.textContent = 'Hinweis: Nicht alle "Nicht zusammen"-Regeln konnten erfüllt werden.';
